@@ -1,0 +1,29 @@
+# Projeye özel Python sanal ortamı
+.venv/
+
+# Python geçici dosyaları
+__pycache__/
+*.pyc
+*.pyo
+
+# Pytest önbelleği
+.pytest_cache/
+
+# Yerel SQLite veritabanı
+data/*.db
+data/*.db-shm
+data/*.db-wal
+
+# Gizli ortam ayarları
+.env
+
+# Editör dosyaları
+.vscode/
+.idea/
+
+# Windows geçici dosyası
+Thumbs.db
+# Bilgisayara özel OpenCode ayarı
+opencode.json
+# Bilgisayara �zel OpenCode ayar�
+opencode.json
