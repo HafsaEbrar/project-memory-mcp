@@ -2,7 +2,12 @@ from typing import TypeAlias
 
 from project_memory.memory_service import MemoryService
 from project_memory.project_resolver import resolve_project_context
-from project_memory.schemas import MemoryCreate, MemorySearchRequest
+from project_memory.schemas import (
+    MemoryCreate,
+    MemoryListRequest,
+    MemorySearchRequest,
+    MemoryUpdate,
+)
 
 
 # MCP araçlarının döndüreceği tek bir hafıza kaydının tipi.
@@ -159,6 +164,164 @@ def recall_memories(
     results = memory_service.recall(
         context=context,
         search=search,
+    )
+
+    # Hafıza modellerini MCP için JSON uyumlu
+    # sözlüklere dönüştürür.
+    return [
+        memory.model_dump(mode="json")
+        for memory in results
+    ]
+
+
+def update_memory(
+    memory_id: int,
+    content: str | None = None,
+    category: str | None = None,
+    importance: int | None = None,
+) -> MemoryToolResult:
+    """
+    Aktif projeye ait bir hafızayı günceller.
+
+    Args:
+        memory_id:
+            Güncellenecek hafıza kaydının kimliği.
+
+        content:
+            İsteğe bağlı yeni içerik.
+
+        category:
+            İsteğe bağlı yeni kategori. Geçerli kategoriler:
+            decision, architecture, technology, error_solution,
+            todo, preference ve session_summary.
+
+        importance:
+            İsteğe bağlı yeni önem seviyesi (1 ile 10 arası).
+
+    Returns:
+        Güncellenen hafıza kaydı.
+
+    Raises:
+        ValueError:
+            Hiçbir alan verilmezse veya hafıza kaydı
+            aktif projede bulunamazsa.
+    """
+
+    # Aktif proje klasörünü otomatik olarak bulur.
+    context = resolve_project_context()
+
+    # Yalnızca verilen alanları temizler.
+    # Verilmeyen alanlar None kalır ve güncellenmez.
+    normalized_content = (
+        content.strip()
+        if content is not None
+        else None
+    )
+
+    normalized_category = normalize_category(category)
+
+    # Güncelleme parametrelerini Pydantic modeliyle doğrular.
+    # En az bir alan verilmediğinde model hata verir.
+    update = MemoryUpdate(
+        content=normalized_content,
+        category=normalized_category,
+        importance=importance,
+    )
+
+    # SQLite üzerinde aktif projeye ait hafızayı günceller.
+    result = memory_service.update_memory(
+        context=context,
+        memory_id=memory_id,
+        update=update,
+    )
+
+    # Pydantic modelini MCP tarafından gönderilebilecek
+    # JSON uyumlu bir sözlüğe dönüştürür.
+    return result.model_dump(mode="json")
+
+
+def forget_memory(
+    memory_id: int,
+) -> MemoryToolResult:
+    """
+    Aktif projeye ait bir hafızayı kalıcı olarak siler.
+
+    Args:
+        memory_id:
+            Silinecek hafıza kaydının kimliği.
+            Pozitif bir tam sayı olmalıdır.
+
+    Returns:
+        Silinen hafıza kaydı.
+
+    Raises:
+        ValueError:
+            memory_id pozitif bir tam sayı değilse
+            veya hafıza kaydı aktif projede bulunamazsa.
+    """
+
+    # Silinecek kaydın kimliği pozitif bir tam sayı olmalıdır.
+    if (
+        isinstance(memory_id, bool)
+        or not isinstance(memory_id, int)
+        or memory_id <= 0
+    ):
+        raise ValueError(
+            "memory_id pozitif bir tam sayı olmalıdır."
+        )
+
+    # Aktif proje klasörünü otomatik olarak bulur.
+    context = resolve_project_context()
+
+    # SQLite üzerinde aktif projeye ait hafızayı siler.
+    result = memory_service.forget_memory(
+        context=context,
+        memory_id=memory_id,
+    )
+
+    # Pydantic modelini MCP tarafından gönderilebilecek
+    # JSON uyumlu bir sözlüğe dönüştürür.
+    return result.model_dump(mode="json")
+
+
+def list_memories(
+    category: str | None = None,
+    limit: int = 20,
+) -> list[MemoryToolResult]:
+    """
+    Aktif projeye ait hafızaları listeler.
+
+    Args:
+        category:
+            İsteğe bağlı kategori filtresi.
+            Boş bırakılırsa bütün kategorilerdeki
+            hafızalar listelenir.
+
+        limit:
+            Döndürülecek en fazla sonuç sayısı.
+
+    Returns:
+        Önem ve güncellenme tarihine göre sıralanmış
+        hafıza kayıtları.
+    """
+
+    # Aktif proje klasörünü otomatik olarak bulur.
+    context = resolve_project_context()
+
+    # Kategori verilmişse temizler.
+    # Boş bırakılmışsa None döner ve kategori filtresi uygulanmaz.
+    normalized_category = normalize_category(category)
+
+    # Liste parametrelerini Pydantic modeliyle doğrular.
+    list_request = MemoryListRequest(
+        category=normalized_category,
+        limit=limit,
+    )
+
+    # SQLite üzerinde aktif projenin hafızalarını listeler.
+    results = memory_service.list_memories(
+        context=context,
+        list_request=list_request,
     )
 
     # Hafıza modellerini MCP için JSON uyumlu
