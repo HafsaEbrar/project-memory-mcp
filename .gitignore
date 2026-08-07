@@ -25,5 +25,4 @@ data/*.db-wal
 Thumbs.db
 # Bilgisayara Ã¶zel OpenCode ayarÄ±
 opencode.json
-# Bilgisayara özel OpenCode ayarý
-opencode.json
+

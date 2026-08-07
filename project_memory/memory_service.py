@@ -3,8 +3,10 @@ import sqlite3
 from project_memory.database import get_database, initialize_database
 from project_memory.schemas import (
     MemoryCreate,
+    MemoryListRequest,
     MemoryRecord,
     MemorySearchRequest,
+    MemoryUpdate,
     ProjectContext,
     ProjectRecord,
 )
@@ -234,6 +236,205 @@ class MemoryService:
         """
 
         parameters.append(search.limit)
+
+        with get_database() as connection:
+            memory_rows = connection.execute(
+                sql,
+                tuple(parameters),
+            ).fetchall()
+
+        return [
+            self._memory_from_row(row)
+            for row in memory_rows
+        ]
+
+    def update_memory(
+        self,
+        context: ProjectContext,
+        memory_id: int,
+        update: MemoryUpdate,
+    ) -> MemoryRecord:
+        """
+        Aktif projeye ait bir hafıza kaydını günceller.
+
+        Yalnızca aktif projeye ait hafızalar güncellenebilir.
+        Güncellenecek hafıza başka bir projeye aitse veya
+        hiç yoksa açık bir hata verir. Güncelleme sırasında
+        updated_at değeri güncellenir.
+        """
+
+        project = self.get_or_create_project(context)
+
+        set_clauses: list[str] = []
+        parameters: list[object] = []
+
+        if update.content is not None:
+            set_clauses.append("content = ?")
+            parameters.append(update.content)
+
+        if update.category is not None:
+            set_clauses.append("category = ?")
+            parameters.append(update.category.value)
+
+        if update.importance is not None:
+            set_clauses.append("importance = ?")
+            parameters.append(update.importance)
+
+        if not set_clauses:
+            raise ValueError(
+                "Güncellenecek alan bulunamadı. "
+                "content, category veya importance "
+                "alanlarından en az biri verilmelidir."
+            )
+
+        set_clauses.append("updated_at = CURRENT_TIMESTAMP")
+
+        parameters.append(memory_id)
+        parameters.append(project.id)
+
+        with get_database() as connection:
+            cursor = connection.execute(
+                f"""
+                UPDATE memories
+                SET {", ".join(set_clauses)}
+                WHERE id = ?
+                  AND project_id = ?
+                """,
+                tuple(parameters),
+            )
+
+            if cursor.rowcount == 0:
+                raise ValueError(
+                    "Güncellenecek hafıza kaydı bulunamadı. "
+                    "Hafızalar yalnızca kendi projeleri "
+                    "içinden güncellenebilir."
+                )
+
+            updated_memory_row = connection.execute(
+                """
+                SELECT
+                    id,
+                    project_id,
+                    content,
+                    category,
+                    importance,
+                    created_at,
+                    updated_at
+                FROM memories
+                WHERE id = ?
+                  AND project_id = ?
+                """,
+                (memory_id, project.id),
+            ).fetchone()
+
+        if updated_memory_row is None:
+            raise RuntimeError(
+                "Hafıza güncellendi ancak tekrar okunamadı."
+            )
+
+        return self._memory_from_row(updated_memory_row)
+
+    def forget_memory(
+        self,
+        context: ProjectContext,
+        memory_id: int,
+    ) -> MemoryRecord:
+        """
+        Aktif projeye ait bir hafıza kaydını kalıcı olarak siler.
+
+        Yalnızca aktif projeye ait hafızalar silinebilir.
+        Silinecek hafıza başka bir projeye aitse veya
+        hiç yoksa açık bir hata verir.
+
+        Silmeden önce kaydı okuyarak silinen hafızanın
+        bilgilerini MemoryRecord olarak saklar ve işlem
+        başarılıysa bu kaydı geri döndürür.
+
+        Not: Silme işlemi geri alınamaz.
+        """
+
+        project = self.get_or_create_project(context)
+
+        with get_database() as connection:
+            memory_row = connection.execute(
+                """
+                SELECT
+                    id,
+                    project_id,
+                    content,
+                    category,
+                    importance,
+                    created_at,
+                    updated_at
+                FROM memories
+                WHERE id = ?
+                  AND project_id = ?
+                """,
+                (memory_id, project.id),
+            ).fetchone()
+
+            if memory_row is None:
+                raise ValueError(
+                    "Silinecek hafıza kaydı bulunamadı. "
+                    "Hafızalar yalnızca kendi projeleri "
+                    "içinden silinebilir."
+                )
+
+            connection.execute(
+                """
+                DELETE FROM memories
+                WHERE id = ?
+                  AND project_id = ?
+                """,
+                (memory_id, project.id),
+            )
+
+        return self._memory_from_row(memory_row)
+
+    def list_memories(
+        self,
+        context: ProjectContext,
+        list_request: MemoryListRequest,
+    ) -> list[MemoryRecord]:
+        """
+        Aktif projeye ait hafızaları listeler.
+
+        Kategori verilmişse yalnızca o kategorideki
+        hafızalar döndürülür. Sonuçlar önce önem puanına,
+        sonra güncellenme tarihine göre sıralanır.
+        """
+
+        project = self.get_or_create_project(context)
+
+        sql = """
+            SELECT
+                id,
+                project_id,
+                content,
+                category,
+                importance,
+                created_at,
+                updated_at
+            FROM memories
+            WHERE project_id = ?
+        """
+
+        parameters: list[object] = [project.id]
+
+        if list_request.category is not None:
+            sql += """
+              AND category = ?
+            """
+            parameters.append(list_request.category.value)
+
+        sql += """
+            ORDER BY
+                importance DESC,
+                updated_at DESC
+            LIMIT ?
+        """
+
+        parameters.append(list_request.limit)
 
         with get_database() as connection:
             memory_rows = connection.execute(

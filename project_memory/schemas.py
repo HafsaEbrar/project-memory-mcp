@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class MemoryCategory(str, Enum):
@@ -97,6 +97,25 @@ class MemoryUpdate(BaseModel):
         le=10,
     )
 
+    @model_validator(mode="after")
+    def at_least_one_field_must_be_set(self) -> "MemoryUpdate":
+        """
+        Güncelleme yapılırken en az bir alanın değiştirilmesini zorlar.
+        """
+
+        if (
+            self.content is None
+            and self.category is None
+            and self.importance is None
+        ):
+            raise ValueError(
+                "Güncellenecek alan bulunamadı. "
+                "content, category veya importance "
+                "alanlarından en az biri verilmelidir."
+            )
+
+        return self
+
 
 class MemorySearchRequest(BaseModel):
     """
@@ -123,6 +142,29 @@ class MemorySearchRequest(BaseModel):
         default=5,
         ge=1,
         le=20,
+        description="En fazla kaç sonuç döndürüleceği",
+    )
+
+
+class MemoryListRequest(BaseModel):
+    """
+    Hafızaları listelerken kullanılan bilgiler.
+    """
+
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+        extra="forbid",
+    )
+
+    category: MemoryCategory | None = Field(
+        default=None,
+        description="İsteğe bağlı kategori filtresi",
+    )
+
+    limit: int = Field(
+        default=20,
+        ge=1,
+        le=100,
         description="En fazla kaç sonuç döndürüleceği",
     )
 
