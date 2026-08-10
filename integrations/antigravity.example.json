@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "project_memory": {
+      "command": "<PROJECT_ROOT>/.venv/Scripts/python.exe",
+      "args": [
+        "<PROJECT_ROOT>/server.py"
+      ],
+      "cwd": "<PROJECT_ROOT>"
+    }
+  }
+}

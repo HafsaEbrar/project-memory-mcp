@@ -23,6 +23,8 @@ data/*.db-wal
 
 # Windows geçici dosyası
 Thumbs.db
-# Bilgisayara özel OpenCode ayarı
+
+# Bilgisayara özel MCP/agent ayarları (Git'e gönderilmez)
 opencode.json
+.agents/mcp_config.json
 
