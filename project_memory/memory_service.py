@@ -3,9 +3,11 @@ import sqlite3
 from project_memory.database import get_database, initialize_database
 from project_memory.schemas import (
     MemoryCreate,
+    MemoryIndexedSearchRequest,
     MemoryListRequest,
     MemoryRecord,
     MemorySearchRequest,
+    MemorySearchResult,
     MemoryUpdate,
     ProjectContext,
     ProjectRecord,
@@ -247,6 +249,107 @@ class MemoryService:
             self._memory_from_row(row)
             for row in memory_rows
         ]
+
+    @staticmethod
+    def _fts_phrase(term: str) -> str:
+        """
+        Arama terimini FTS5 sorgusu için güvenli bir tırnaklı ifadeye çevirir.
+
+        Terim, FTS5 sorgu sözdizimi özel karakterlerinden arındırılmadan
+        doğrudan sorguya eklenmez. Terim çift tırnak içine alınır ve içindeki
+        çift tırnaklar FTS5 kurallarına göre ikiye katlanır. Bu sayede kullanıcı
+        girdisi tehlikeli FTS5 sorgusu üretemez; girdi yalnızca bir sözcük
+        (phrase) olarak ele alınır.
+        """
+
+        return f'"{term.replace(chr(34), chr(34) * 2)}"'
+
+    def search_memories(
+        self,
+        context: ProjectContext,
+        search: MemoryIndexedSearchRequest,
+    ) -> list[MemorySearchResult]:
+        """
+        Aktif projeye ait hafızalarda FTS5 tabanlı indeksli arama yapar.
+
+        Verilen terimler OR mantığıyla aranır: terimlerden en az biriyle
+        eşleşen hafıza kayıtları sonuca dahil edilir.
+
+        Sıralama:
+        1. bm25() puanı (küçük değer daha iyi eşleşmedir)
+        2. eşitlik durumunda importance DESC
+        3. son olarak updated_at DESC
+
+        Bu arama semantik embedding kullanmaz; yalnızca kelime/terim
+        indekslemesi yapar.
+        """
+
+        project = self.get_or_create_project(context)
+
+        # Her terimi FTS5 için güvenli hale getirir ve OR ile birleştirir.
+        match_query = " OR ".join(
+            self._fts_phrase(term)
+            for term in search.terms
+        )
+
+        sql = """
+            SELECT
+                m.id,
+                m.project_id,
+                m.content,
+                m.category,
+                m.importance,
+                m.created_at,
+                m.updated_at,
+                bm25(memories_fts) AS rank
+            FROM memories_fts
+            JOIN memories AS m
+              ON m.id = memories_fts.rowid
+            WHERE memories_fts MATCH ?
+              AND m.project_id = ?
+        """
+
+        parameters: list[object] = [
+            match_query,
+            project.id,
+        ]
+
+        if search.category is not None:
+            sql += """
+              AND m.category = ?
+            """
+            parameters.append(search.category.value)
+
+        sql += """
+            ORDER BY
+                rank,
+                m.importance DESC,
+                m.updated_at DESC
+            LIMIT ?
+        """
+
+        parameters.append(search.limit)
+
+        with get_database() as connection:
+            memory_rows = connection.execute(
+                sql,
+                tuple(parameters),
+            ).fetchall()
+
+        results: list[MemorySearchResult] = []
+
+        for row in memory_rows:
+            row_dict = dict(row)
+            rank = row_dict.pop("rank")
+
+            results.append(
+                MemorySearchResult(
+                    memory=self._memory_from_row(row_dict),
+                    rank=rank,
+                )
+            )
+
+        return results
 
     def update_memory(
         self,

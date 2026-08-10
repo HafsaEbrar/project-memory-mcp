@@ -146,6 +146,66 @@ class MemorySearchRequest(BaseModel):
     )
 
 
+class MemoryIndexedSearchRequest(BaseModel):
+    """
+    SQLite FTS5 tabanlı indeksli arama için kullanılan bilgiler.
+
+    Terimler OR mantığıyla aranır; yani verilen terimlerden en az biriyle
+    eşleşen hafızalar sonuca dahil edilir. Semantik anlam eşleşmesi
+    yapılmaz, yalnızca kelime/terim indekslemesi kullanılır.
+    """
+
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+        extra="forbid",
+    )
+
+    terms: list[str] = Field(
+        min_length=1,
+        max_length=20,
+        description=(
+            "Hafızalarda aranacak kelime veya terimler. "
+            "Terimlerden en az biriyle eşleşen hafızalar bulunur (OR)."
+        ),
+    )
+
+    category: MemoryCategory | None = Field(
+        default=None,
+        description="İsteğe bağlı kategori filtresi",
+    )
+
+    limit: int = Field(
+        default=5,
+        ge=1,
+        le=20,
+        description="En fazla kaç sonuç döndürüleceği",
+    )
+
+    @model_validator(mode="after")
+    def clean_and_validate_terms(self) -> "MemoryIndexedSearchRequest":
+        """
+        Her terimi temizler ve boş terimleri çıkarır.
+
+        Tüm terimler boşsa açık bir hata verir.
+        """
+
+        cleaned_terms: list[str] = []
+
+        for term in self.terms:
+            cleaned_term = term.strip()
+            if cleaned_term:
+                cleaned_terms.append(cleaned_term)
+
+        if not cleaned_terms:
+            raise ValueError(
+                "En az bir geçerli arama terimi verilmelidir. "
+                "Boş terimler arama için kabul edilmez."
+            )
+
+        self.terms = cleaned_terms
+        return self
+
+
 class MemoryListRequest(BaseModel):
     """
     Hafızaları listelerken kullanılan bilgiler.
@@ -193,6 +253,24 @@ class MemoryRecord(BaseModel):
     importance: int
     created_at: datetime
     updated_at: datetime
+
+
+class MemorySearchResult(BaseModel):
+    """
+    FTS5 tabanlı indeksli aramadan dönen tek bir sonuç.
+
+    rank alanı bm25() işlevinin döndürdüğü sıralama puanıdır.
+    DİKKAT: FTS5 bm25() değerinde DÜŞÜK (küçük) değer daha iyi sonuç
+    anlamına gelir. Yani rank ne kadar küçükse eşleşme o kadar iyidir.
+    """
+
+    memory: MemoryRecord
+
+    rank: float = Field(
+        description=(
+            "FTS5 bm25() sıralama puanı. Düşük değer daha iyi eşleşme demektir."
+        ),
+    )
 
 
 class ProjectContextResponse(BaseModel):

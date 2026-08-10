@@ -5,6 +5,7 @@ from project_memory.tools import (
     list_memories as list_memories_tool,
     recall_memories,
     remember_memory,
+    search_memories as search_memories_tool,
     update_memory as update_memory_tool,
 )
 
@@ -63,6 +64,41 @@ def recall(
 
     return recall_memories(
         query=query,
+        category=category,
+        limit=limit,
+    )
+
+
+@mcp.tool()
+def search_memories(
+    terms: list[str],
+    category: str | None = None,
+    limit: int = 5,
+) -> list[dict[str, object]]:
+    """
+    Aktif projeye ait hafızalarda SQLite FTS5 tabanlı indeksli arama yapar.
+
+    Bu araç semantik embedding modeli kullanmaz; yalnızca verilen
+    terimleri FTS5 kelime indeksi üzerinden eşleştirir.
+
+    Agent, kullanıcının sorusundan mümkünse birkaç anlamlı anahtar
+    kelime veya eş anlamlı üretmelidir (örneğin "database" ve
+    "veritabanı" gibi). Semantik anlam çıkarımı ajanın görevidir.
+
+    Args:
+        terms:
+            Aranacak kelime veya terimler. Terimlerden en az biriyle
+            eşleşen hafızalar döndürülür (OR mantığı).
+
+        category:
+            İsteğe bağlı hafıza kategorisi.
+
+        limit:
+            Döndürülecek en fazla sonuç sayısı.
+    """
+
+    return search_memories_tool(
+        terms=terms,
         category=category,
         limit=limit,
     )
