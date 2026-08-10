@@ -66,6 +66,41 @@ Bu yaklaşım, Codebase-MCP benzeri bir agent/tool ayrımı kullanır; ancak
 ProjectMemory, Codebase MCP'nin birebir kopyası değildir. ProjectMemory
 yapay zekâ ajanları için kalıcı, proje bazlı hafıza sağlamaya odaklanır.
 
+## Memory Quality: SAME / CHANGED / NEW
+
+ProjeMemory'ye yeni bir kalıcı bilgi kaydedilmeden önce agent,
+duplicate ve conflict kontrolü yapar. Yeni bilgi üç sınıftan birine
+ayrılır:
+
+- **SAME** — aynı konu, aynı temel karar/değer: kelimeler değil,
+  taşınan karar karşılaştırılır. Paraphrase, daha açıklayıcı ifade,
+  eş anlamlı kelimeler veya farklı cümle yapısı CHANGED değildir;
+  temel karar aynıysa SAME'dir ve hiçbir yazma işlemi yapılmaz.
+  Yeni kayıt oluşturulmaz, mevcut hafıza olduğu gibi kalır.
+- **CHANGED** — aynı konu fakat eski kararla çelişen/yeni karar:
+  yeni kayıt oluşturulmaz, ilgili eski hafıza `update_memory` ile
+  güncellenir.
+- **NEW** — gerçekten farklı/yeni bir konu: `remember` ile yeni
+  hafıza oluşturulur.
+
+Bu davranışta katmanlar şöyle ayrılır:
+
+- **Agent** = yorumlama. Yeni bilginin anlamını yorumlar, önce
+  `search_memories` ile ilgili mevcut hafızaları bulur ve
+  SAME / CHANGED / NEW kararını verir.
+- **ProjectMemory MCP** = yalnızca `search_memories`, `remember` ve
+  `update_memory` gibi araçları sağlar; anlam kararı vermez.
+- **SQLite + FTS5** = saklama ve indeksli retrieval katmanı.
+
+Herhangi bir embedding, model veya vektör veritabanı kullanılmaz;
+duplicate/conflict anlamı tamamen ajanın yorumuna dayanır.
+`remember` sunucu içindeki birebir eşleşme kontrolü yalnızca ikinci
+bir güvenlik katmanıdır.
+
+Aynı protokol OpenCode skill'inde (`.opencode/skills/project-memory`)
+ve Antigravity rule'ında (`.agents/rules/project-memory.md`)
+tanımlıdır; iki ajan aynı davranışı sergiler.
+
 ## Test Edilen Agentlar
 
 Aşağıdaki agentlar aynı ProjectMemory MCP sunucusuna ve aynı SQLite

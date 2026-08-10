@@ -20,6 +20,81 @@ Kullanılacak MCP araçları:
 - `project_memory_update_memory`
 - `project_memory_forget`
 
+## Yeni bilgi kaydetmeden önce: SAME / CHANGED / NEW
+
+Kalıcı bir bilgiyi kaydetmeden önce mutlaka duplicate/conflict
+kontrolü yap:
+
+1. Yeni bilgiden 2-5 anlamlı anahtar terim üret (gerekirse
+   Türkçe/İngilizce karşılıklarını ekle).
+2. Bu terimlerle `project_memory_search_memories` çağır.
+3. Dönen sonuçları yeni bilgiyle karşılaştır ve aşağıdaki
+   üç sınıftan birine karar ver:
+
+**SAME** — Aynı konu, aynı temel karar/değer:
+
+Sınıflandırmada cümlenin kelimelerine değil, taşıdığı temel karar
+veya değere bak. Aşağıdaki durumlar CHANGED değildir, SAME kabul
+edilir:
+
+- Aynı kararın yeniden ifade edilmesi (paraphrase)
+- Aynı kararın daha açıklayıcı yazılması
+- Eş anlamlı kelimeler kullanılması
+- Cümle yapısının değiştirilmesi
+
+Örnek:
+
+> Mevcut: "Projenin arayüz rengi mavi olacak."
+> Yeni: "Proje arayüz renginin mavi olmasına karar verildi."
+> → SAME (temel karar aynı: mavi)
+
+SAME durumunda **hiçbir yazma işlemi yapma**:
+
+- `project_memory_remember` çağırma.
+- `project_memory_update_memory` çağırma.
+- Mevcut kayıt aynen kalsın.
+
+**CHANGED** — Aynı konu fakat yeni bilgi eski kararın yerini
+alıyor veya onunla çelişiyor (temel karar/değer değişmiş):
+
+- Yeni `project_memory_remember` çağırma (çift kayıt oluşturma).
+- İlgili eski kaydın `memory_id` değerini bul ve
+  `project_memory_update_memory` ile yeni içeriği eski kayda yaz.
+
+**NEW** — Gerçekten yeni/farklı bir konu:
+
+- `project_memory_remember` ile yeni hafıza oluştur.
+
+Arama ilgili bir sonuç döndürmezse sınıf **NEW**'dir.
+
+Not: `project_memory_remember` içinde birebir aynı içerik/kategori
+için ayrıca bir duplicate kontrolü vardır; bu yalnızca ikinci bir
+güvenlik katmanıdır. Asıl duplicate/conflict kararı yukarıdaki
+adımlarla verilir.
+
+Örnek:
+
+Mevcut kayıt:
+
+> "Veritabanı olarak SQLite kullanılacak."
+
+Yeni bilgi:
+
+> "Artık veritabanı olarak PostgreSQL kullanılacak."
+
+```text
+project_memory_search_memories(
+    terms=["database", "veritabanı"],
+    category="technology",
+    limit=5
+)
+```
+
+→ SQLite kaydı bulunur
+→ **CHANGED**
+→ `project_memory_update_memory` ile eski kayıt PostgreSQL
+  olarak güncellenir, yeni kayıt oluşturulmaz.
+
 ## Geçmiş bilgi sorularında tercih sırası
 
 Geçmiş proje bilgisi sorularında araçları şu sırayla dene:
