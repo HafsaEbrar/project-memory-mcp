@@ -20,6 +20,17 @@ Kullanılacak MCP araçları:
 - `project_memory_update_memory`
 - `project_memory_forget`
 
+## Geçmiş bilgi sorularında tercih sırası
+
+Geçmiş proje bilgisi sorularında araçları şu sırayla dene:
+
+1. Önce `project_memory_search_memories`
+2. Yetersizse `project_memory_recall`
+3. `project_memory_list_memories` yalnızca geniş bir listeleme gerektiğinde
+
+Doğrudan bütün hafızaları `project_memory_list_memories` ile çekmek ilk
+tercih değildir.
+
 ## Ne zaman search_memories kullanılmalı?
 
 `project_memory_search_memories`, hafızalar üzerinde SQLite FTS5 tabanlı
@@ -54,13 +65,16 @@ Araç çağrısı:
 ```text
 project_memory_search_memories(
     terms=["database", "veritabanı"],
+    category="technology",
     limit=5
 )
 ```
 
 ## Ne zaman recall kullanılmalı?
 
-Aşağıdaki durumlarda cevap vermeden önce `project_memory_recall` aracını kullan:
+`project_memory_search_memories` ile sonuç bulunamazsa veya yetersizse
+`project_memory_recall` kullanılır. Aşağıdaki durumlarda da cevap
+vermeden önce `project_memory_recall` aracını kullan:
 
 - Kullanıcı daha önce alınan bir kararı soruyorsa
 - Önceden seçilen teknoloji, veritabanı veya kütüphane soruluyorsa
@@ -74,7 +88,8 @@ Arama sorgusunda kullanıcının sorusundaki en anlamlı ve kısa anahtar kelime
 
 ## Ne zaman list_memories kullanılmalı?
 
-Aşağıdaki durumlarda `project_memory_list_memories` aracını kullan:
+`project_memory_list_memories` öncelikli arama aracı değildir; yalnızca
+geniş listeleme gerektiğinde kullanılır. Aşağıdaki durumlarda kullan:
 
 - Kullanıcı proje hakkında kayıtlı hafızaların tamamını görmek istiyorsa
 - Kayıtlı hafızaların genel bir özeti veya dökümü isteniyorsa
