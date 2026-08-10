@@ -15,9 +15,48 @@ Kullanılacak MCP araçları:
 
 - `project_memory_remember`
 - `project_memory_recall`
+- `project_memory_search_memories`
 - `project_memory_list_memories`
 - `project_memory_update_memory`
 - `project_memory_forget`
+
+## Ne zaman search_memories kullanılmalı?
+
+`project_memory_search_memories`, hafızalar üzerinde SQLite FTS5 tabanlı
+indeksli (tam metin) arama yapar. Semantik embedding modeli kullanmaz;
+yalnızca verilen terimleri kelime indeksi üzerinden OR mantığıyla eşleştirir.
+
+Aşağıdaki durumlarda recall yerine `project_memory_search_memories`
+kullanılabilir:
+
+- Kullanıcı geçmiş proje bilgisini doğal, cümle hâlinde bir soruyla
+  soruyorsa (ör. "Hangi database çözümünü seçmiştik?")
+- Tam ifade değil de birkaç anahtar kelimeyle arama yapmak gerekiyorsa
+
+Kullanım kuralları:
+
+- Kullanıcının sorusundan 2-5 kısa ve anlamlı arama terimi üret.
+- Gerekirse Türkçe/İngilizce karşılıklarını ekle.
+- Bilmediğin kesin cevabı arama terimi olarak uydurma. Örneğin SQLite'ın
+  seçildiğini önceden bilmiyorsan "sqlite" terimini ekleme.
+- Sonuç bulunamazsa daha genel veya alternatif terimlerle tekrar dene.
+- Tam kelime/ifade araması gerektiğinde mevcut recall aracını kullanmaya
+  devam edebilirsin.
+
+Örnek:
+
+Kullanıcı:
+
+> Hangi database çözümünü seçmiştik?
+
+Araç çağrısı:
+
+```text
+project_memory_search_memories(
+    terms=["database", "veritabanı"],
+    limit=5
+)
+```
 
 ## Ne zaman recall kullanılmalı?
 

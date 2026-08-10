@@ -4,6 +4,7 @@ from project_memory.memory_service import MemoryService
 from project_memory.project_resolver import resolve_project_context
 from project_memory.schemas import (
     MemoryCreate,
+    MemoryIndexedSearchRequest,
     MemoryListRequest,
     MemorySearchRequest,
     MemoryUpdate,
@@ -171,6 +172,85 @@ def recall_memories(
     return [
         memory.model_dump(mode="json")
         for memory in results
+    ]
+
+
+def search_memories(
+    terms: list[str],
+    category: str | None = None,
+    limit: int = 5,
+) -> list[dict[str, object]]:
+    """
+    Aktif projeye ait hafızalarda SQLite FTS5 tabanlı indeksli arama yapar.
+
+    Verilen terimler OR mantığıyla aranır; terimlerden en az biriyle
+    eşleşen hafızalar sonuca dahil edilir. Semantik embedding modeli
+    kullanılmaz, yalnızca kelime/terim indekslemesi yapılır.
+
+    Args:
+        terms:
+            Hafızalarda aranacak kelime veya terimler. En az bir
+            geçerli (boş olmayan) terim verilmelidir.
+
+        category:
+            İsteğe bağlı kategori filtresi.
+            Boş bırakılırsa bütün kategorilerde arama yapılır.
+
+        limit:
+            Döndürülecek en fazla sonuç sayısı.
+
+    Returns:
+        Sıralanmış arama sonuçları. Her sonuç, hafıza kaydı bilgilerine
+        ek olarak bm25() sıralama puanını taşıyan "rank" alanını içerir.
+        DİKKAT: rank değeri düşükse eşleşme o kadar iyidir.
+
+    Raises:
+        ValueError:
+            Hiçbir geçerli arama terimi verilmezse.
+    """
+
+    # Aktif proje klasörünü otomatik olarak bulur.
+    context = resolve_project_context()
+
+    # Kategori verilmişse temizler.
+    normalized_category = normalize_category(category)
+
+    # Terimlerin başındaki ve sonundaki gereksiz boşlukları temizler,
+    # boş kalan terimleri listeden çıkarır.
+    cleaned_terms = [
+        term.strip()
+        for term in terms
+        if term.strip()
+    ]
+
+    # Hiç geçerli terim kalmazsa açık hata verir.
+    if not cleaned_terms:
+        raise ValueError(
+            "Arama için en az bir geçerli terim verilmelidir. "
+            "Boş terimler kabul edilmez."
+        )
+
+    # Arama parametrelerini Pydantic modeliyle doğrular.
+    search = MemoryIndexedSearchRequest(
+        terms=cleaned_terms,
+        category=normalized_category,
+        limit=limit,
+    )
+
+    # FTS5 indeksi üzerinde hafıza araması yapar.
+    results = memory_service.search_memories(
+        context=context,
+        search=search,
+    )
+
+    # Her sonucu MCP için JSON uyumlu bir sözlüğe dönüştürür.
+    # rank alanı hafıza bilgileriyle aynı sözlükte döndürülür.
+    return [
+        {
+            "rank": result.rank,
+            **result.memory.model_dump(mode="json"),
+        }
+        for result in results
     ]
 
 

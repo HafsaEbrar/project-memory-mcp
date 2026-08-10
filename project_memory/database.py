@@ -1,3 +1,4 @@
+import os
 import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -16,9 +17,30 @@ BASE_DIR = PACKAGE_DIR.parent
 # project-memory-mcp/data/
 DATA_DIR = BASE_DIR / "data"
 
-# Veritabanı dosyasının tam yolu:
+# Veritabanı dosyasının varsayılan (production) tam yolu:
 # project-memory-mcp/data/memories.db
 DATABASE_PATH = DATA_DIR / "memories.db"
+
+# Testlerde geçici bir veritabanı kullanmak istenirse
+# bu ortam değişkeniyle veritabanı yolu değiştirilebilir.
+DB_PATH_ENV = "PROJECT_MEMORY_DB_PATH"
+
+
+def get_database_path() -> Path:
+    """
+    Kullanılacak SQLite veritabanı dosyasının yolunu döndürür.
+
+    PROJECT_MEMORY_DB_PATH ortam değişkeni ayarlanmışsa
+    bu dosya kullanılır. Aksi halde varsayılan production
+    yolu (data/memories.db) kullanılır.
+    """
+
+    environment_path = os.environ.get(DB_PATH_ENV)
+
+    if environment_path:
+        return Path(environment_path)
+
+    return DATABASE_PATH
 
 
 def create_connection() -> sqlite3.Connection:
@@ -28,11 +50,13 @@ def create_connection() -> sqlite3.Connection:
     Her çağrıldığında yeni bir bağlantı döndürür.
     """
 
-    # data klasörü yoksa otomatik oluşturur.
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    database_path = get_database_path()
+
+    # Veritabanı dosyasının bulunduğu klasör yoksa otomatik oluşturur.
+    database_path.parent.mkdir(parents=True, exist_ok=True)
 
     connection = sqlite3.connect(
-        DATABASE_PATH,
+        database_path,
         timeout=10,
     )
 
@@ -140,7 +164,163 @@ def initialize_database() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_memories_importance
             ON memories(importance);
+
+
+            -- Anahtar/değer deposu.
+            -- FTS indeksinin hangi şema sürümüyle oluşturulduğunu
+            -- hatırlamak için kullanılır.
+            CREATE TABLE IF NOT EXISTS meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+
+
+            -- FTS5 arama indeksi.
+            --
+            -- Yalnızca memories.content alanını indeksler.
+            -- external-content yaklaşımı kullanır:
+            --   * content='memories'   -> asıl metin memories tablosunda durur
+            --   * content_rowid='id'   -> memories.id ile eşleşir
+            --
+            -- memories tablosu ana veri kaynağı olmaya devam eder.
+            -- memories_fts yalnızca hızlı tam metin araması için kullanılır.
+            CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+                content,
+                content='memories',
+                content_rowid='id',
+                tokenize='unicode61'
+            );
+
+
+            -- FTS indeksini memories tablosuyla senkron tutan trigger'lar.
+            --
+            -- Yalnızca content alanı değiştiğinde tetiklenir.
+            -- Sadece category veya importance değişirse FTS indeksi
+            -- gereksiz yere yeniden oluşturulmaz.
+
+            CREATE TRIGGER IF NOT EXISTS memories_ai
+            AFTER INSERT ON memories
+            BEGIN
+                INSERT INTO memories_fts (rowid, content)
+                VALUES (new.id, new.content);
+            END;
+
+
+            CREATE TRIGGER IF NOT EXISTS memories_ad
+            AFTER DELETE ON memories
+            BEGIN
+                INSERT INTO memories_fts (memories_fts, rowid, content)
+                VALUES ('delete', old.id, old.content);
+            END;
+
+
+            CREATE TRIGGER IF NOT EXISTS memories_au
+            AFTER UPDATE OF content ON memories
+            BEGIN
+                INSERT INTO memories_fts (memories_fts, rowid, content)
+                VALUES ('delete', old.id, old.content);
+
+                INSERT INTO memories_fts (rowid, content)
+                VALUES (new.id, new.content);
+            END;
             """
+        )
+
+        _sync_fts_index(connection)
+
+
+# FTS indeks şemasının sürüm numarası.
+#
+# FTS tablosunun yapısı veya tokenizer ayarı değiştiğinde bu değer
+# artırılır. Sürüm eşleşmediğinde indeks, memories tablosunun tamamından
+# yeniden oluşturulur.
+FTS_SCHEMA_VERSION = "1"
+
+
+def _get_meta_value(
+    connection: sqlite3.Connection,
+    key: str,
+) -> str | None:
+    """
+    meta tablosundan tek bir anahtarın değerini okur.
+    """
+
+    row = connection.execute(
+        "SELECT value FROM meta WHERE key = ?",
+        (key,),
+    ).fetchone()
+
+    return row[0] if row is not None else None
+
+
+def _set_meta_value(
+    connection: sqlite3.Connection,
+    key: str,
+    value: str,
+) -> None:
+    """
+    meta tablosuna bir anahtar/değer yazar veya mevcut değeri günceller.
+    """
+
+    connection.execute(
+        """
+        INSERT INTO meta (key, value)
+        VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE
+        SET value = excluded.value
+        """,
+        (key, value),
+    )
+
+
+def _sync_fts_index(connection: sqlite3.Connection) -> None:
+    """
+    FTS indeksini gerekirse memories tablosundan yeniden oluşturur.
+
+    meta tablosunda saklanan FTS şema sürümü, mevcut FTS_SCHEMA_VERSION
+    değeriyle eşleşmiyorsa indeks rebuild edilir ve sürüm güncellenir.
+
+    Not: memories_fts dışsal içerikli (external-content) bir tablo
+    olduğu için "SELECT COUNT(*) FROM memories_fts" satır sayısını
+    memories tablosundan döndürür; bu yüzden senkron durumu satır
+    sayısıyla anlaşılamaz. Sürüm işareti bu sorunu ortadan kaldırır.
+
+    Bu sayede FTS indeksi eklenmeden önce kaydedilmiş eski hafıza
+    kayıtları da indekslenir; kullanıcının memories.db dosyasını
+    silmesi gerekmez.
+    """
+
+    current_version = _get_meta_value(
+        connection,
+        "fts_schema_version",
+    )
+
+    if current_version == FTS_SCHEMA_VERSION:
+        return
+
+    connection.execute(
+        "INSERT INTO memories_fts (memories_fts) VALUES ('rebuild')"
+    )
+
+    _set_meta_value(
+        connection,
+        "fts_schema_version",
+        FTS_SCHEMA_VERSION,
+    )
+
+
+def rebuild_fts_index() -> None:
+    """
+    FTS indeksini memories tablosunun tamamından yeniden oluşturur.
+
+    Senkronu bozan durumlarda (ör. trigger'ların devreye giremediği
+    bir durum) arama indeksini sıfırdan eski haline getirmek için
+    kullanılabilir.
+    """
+
+    with get_database() as connection:
+        connection.execute(
+            "INSERT INTO memories_fts (memories_fts) VALUES ('rebuild')"
         )
 
 
@@ -163,6 +343,6 @@ if __name__ == "__main__":
     initialize_database()
 
     if database_health_check():
-        print(f"Veritabanı hazır: {DATABASE_PATH}")
+        print(f"Veritabanı hazır: {get_database_path()}")
     else:
         print("Veritabanı bağlantısı kurulamadı.")
