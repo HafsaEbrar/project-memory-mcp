@@ -551,6 +551,7 @@ class ChatAgent:
         system_prompt: str | None = None,
         max_tool_calls: int = 8,
         tools: list[dict[str, Any]] | None = None,
+        history: list[dict[str, Any]] | None = None,
     ) -> None:
         if max_tool_calls < 1:
             raise AIServiceError(
@@ -567,7 +568,13 @@ class ChatAgent:
         else:
             self._tools = mcp_tools_to_openai_tools(memory_client.tools)
 
-        self._history: list[dict[str, Any]] = []
+        # Oturum geçmişi (user/assistant dönüşleri) ile başlatılabilir;
+        # verilmezse boş geçmişle olur (geriye uyumlu davranış).
+        self._history: list[dict[str, Any]] = (
+            [dict(message) for message in history]
+            if history
+            else []
+        )
 
     @property
     def history(self) -> list[dict[str, Any]]:
