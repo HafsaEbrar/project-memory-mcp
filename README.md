@@ -15,23 +15,19 @@ ProjectMemory içinde ayrı bir embedding modeli, vector database veya gömülü
 
 ## Proje Durumu
 
-- ✅ ProjectMemory MCP Server
-- ✅ SQLite tabanlı kalıcı hafıza
-- ✅ FTS5 indeksli arama
-- ✅ `remember`
-- ✅ `recall`
-- ✅ `search_memories`
-- ✅ `list_memories`
-- ✅ `update_memory`
-- ✅ `forget`
-- ✅ Memory Quality: SAME / CHANGED / NEW
-- ✅ OpenCode entegrasyonu
-- ✅ Antigravity CLI entegrasyonu
-- ✅ Cross-Agent ortak hafıza
-- ✅ Normal Chat MCP Client
-- ✅ Normal Chat AI Service
-- ⬜ FastAPI Web Backend
-- ⬜ HTML/CSS/JavaScript Chat UI
+Çekirdek bileşenler tamamlandı; MCP sunucusu, hafıza, arama ve entegrasyonlar çalışır durumda.
+
+| Bileşen | Durum |
+| --- | --- |
+| ProjectMemory MCP Server | Tamamlandı |
+| SQLite kalıcı hafıza + FTS5 indeksli arama | Tamamlandı |
+| MCP araçları: `remember`, `recall`, `search_memories`, `list_memories`, `update_memory`, `forget` | Tamamlandı |
+| Memory Quality (SAME / CHANGED / NEW) | Tamamlandı |
+| OpenCode / Antigravity CLI entegrasyonu | Tamamlandı |
+| Cross-Agent ortak hafıza | Tamamlandı |
+| Normal Chat MCP Client + AI Service | Tamamlandı |
+
+FastAPI Web Backend ve HTML/CSS/JavaScript Chat UI henüz tamamlanmadı; ilerleme [Roadmap](#roadmap) → Sırada bölümünde takip edilir.
 
 ## Genel Bakış
 
@@ -352,20 +348,20 @@ Testlerin tamamında production `data/memories.db` değiştirilmez.
 
 ## Roadmap
 
-**Completed:**
+**Tamamlandı:**
 
 - MCP core
 - persistent SQLite memory
 - FTS5 indeksli arama
-- memory quality (SAME / CHANGED / NEW)
+- Memory Quality (SAME / CHANGED / NEW)
 - OpenCode entegrasyonu
-- Antigravity entegrasyonu
-- cross-agent memory
+- Antigravity CLI entegrasyonu
+- Cross-Agent ortak hafıza
 - normal chat MCP client
 - normal chat AI service
 
-**Next:**
+**Sırada:**
 
-- FastAPI web backend
-- Web chat UI
-- end-to-end normal chat test
+- FastAPI Web Backend
+- Web Chat UI
+- End-to-End Normal Chat Test
