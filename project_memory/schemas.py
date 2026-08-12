@@ -21,6 +21,11 @@ class MemoryCategory(str, Enum):
     SESSION_SUMMARY = "session_summary"
 
 
+class MemoryScope(str, Enum):
+    SHARED = "shared"
+    USER = "user"
+
+
 class ProjectContext(BaseModel):
     """
     Coding agent'ın açık olduğu aktif projeyi temsil eder.
@@ -69,6 +74,11 @@ class MemoryCreate(BaseModel):
         ge=1,
         le=10,
         description="Bilginin 1 ile 10 arasındaki önem seviyesi",
+    )
+
+    scope: MemoryScope = Field(
+        default=MemoryScope.SHARED,
+        description="Hafızanın shared veya user kapsamı",
     )
 
 
@@ -138,6 +148,8 @@ class MemorySearchRequest(BaseModel):
         description="İsteğe bağlı kategori filtresi",
     )
 
+    owner_id: str | None = Field(default=None, min_length=1, max_length=200)
+
     limit: int = Field(
         default=5,
         ge=1,
@@ -173,6 +185,8 @@ class MemoryIndexedSearchRequest(BaseModel):
         default=None,
         description="İsteğe bağlı kategori filtresi",
     )
+
+    owner_id: str | None = Field(default=None, min_length=1, max_length=200)
 
     limit: int = Field(
         default=5,
@@ -221,6 +235,8 @@ class MemoryListRequest(BaseModel):
         description="İsteğe bağlı kategori filtresi",
     )
 
+    owner_id: str | None = Field(default=None, min_length=1, max_length=200)
+
     limit: int = Field(
         default=20,
         ge=1,
@@ -257,6 +273,8 @@ class MemoryRecord(BaseModel):
     content: str
     category: MemoryCategory
     importance: int
+    scope: MemoryScope
+    owner_id: str | None
     created_at: datetime
     updated_at: datetime
 
@@ -277,12 +295,6 @@ class MemorySearchResult(BaseModel):
             "FTS5 bm25() sıralama puanı. Düşük değer daha iyi eşleşme demektir."
         ),
     )
-
-
-class ProjectContextResponse(BaseModel):
-    project: ProjectRecord
-    total_memories: int
-    memories: list[MemoryRecord]
 
 
 class ProjectContextResponse(BaseModel):

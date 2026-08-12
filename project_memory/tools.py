@@ -14,7 +14,7 @@ from project_memory.schemas import (
 
 # MCP araçlarının döndüreceği tek bir hafıza kaydının tipi.
 # Hafıza kayıtlarında metin ve sayı değerleri bulunur.
-MemoryToolResult: TypeAlias = dict[str, str | int]
+MemoryToolResult: TypeAlias = dict[str, object]
 
 
 # Hafıza servisini bir kez oluşturuyoruz.
@@ -56,10 +56,18 @@ def normalize_category(category: str | None) -> str | None:
     return cleaned_category or None
 
 
+def normalize_owner_id(owner_id: str | None) -> str | None:
+    if owner_id is None:
+        return None
+    cleaned_owner_id = owner_id.strip()
+    return cleaned_owner_id or None
+
+
 def remember_memory(
     content: str,
     category: str,
     importance: int = 5,
+    scope: str = "shared",
 ) -> MemoryToolResult:
     """
     Aktif projeye kalıcı bir hafıza kaydeder.
@@ -104,6 +112,7 @@ def remember_memory(
         content=normalized_content,
         category=normalized_category,
         importance=importance,
+        scope=scope.strip().lower(),
     )
 
     # Doğrulanan hafızayı SQLite veritabanına kaydeder.
@@ -121,6 +130,7 @@ def recall_memories(
     query: str,
     category: str | None = None,
     limit: int = 5,
+    owner_id: str | None = None,
 ) -> list[MemoryToolResult]:
     """
     Aktif projeye ait hafızalarda arama yapar.
@@ -160,6 +170,7 @@ def recall_memories(
         query=normalized_query,
         category=normalized_category,
         limit=limit,
+        owner_id=normalize_owner_id(owner_id),
     )
 
     # SQLite üzerinde hafıza araması yapar.
@@ -180,6 +191,7 @@ def search_memories(
     terms: list[str],
     category: str | None = None,
     limit: int = 5,
+    owner_id: str | None = None,
 ) -> list[dict[str, object]]:
     """
     Aktif projeye ait hafızalarda SQLite FTS5 tabanlı indeksli arama yapar.
@@ -236,6 +248,7 @@ def search_memories(
         terms=cleaned_terms,
         category=normalized_category,
         limit=limit,
+        owner_id=normalize_owner_id(owner_id),
     )
 
     # FTS5 indeksi üzerinde hafıza araması yapar.
@@ -368,6 +381,7 @@ def forget_memory(
 def list_memories(
     category: str | None = None,
     limit: int = 20,
+    owner_id: str | None = None,
 ) -> list[MemoryToolResult]:
     """
     Aktif projeye ait hafızaları listeler.
@@ -397,6 +411,7 @@ def list_memories(
     list_request = MemoryListRequest(
         category=normalized_category,
         limit=limit,
+        owner_id=normalize_owner_id(owner_id),
     )
 
     # SQLite üzerinde aktif projenin hafızalarını listeler.
@@ -415,8 +430,6 @@ def list_memories(
 
 def get_project_context(limit: int = 10) -> dict[str, object]:
     context = resolve_project_context()
-    result = memory_service.get_project_context(
-        context=context,
-        request=ProjectContextRequest(limit=limit),
-    )
+    request = ProjectContextRequest(limit=limit)
+    result = memory_service.get_project_context(context=context, request=request)
     return result.model_dump(mode="json")

@@ -142,6 +142,12 @@ def initialize_database() -> None:
                     importance BETWEEN 1 AND 10
                 ),
 
+                scope TEXT NOT NULL DEFAULT 'shared' CHECK (
+                    scope IN ('shared', 'user')
+                ),
+
+                owner_id TEXT,
+
                 created_at TEXT NOT NULL
                     DEFAULT CURRENT_TIMESTAMP,
 
@@ -226,7 +232,34 @@ def initialize_database() -> None:
             """
         )
 
+        _migrate_memory_ownership(connection)
+
+        connection.executescript(
+            """
+            CREATE INDEX IF NOT EXISTS idx_memories_project_scope_owner
+            ON memories(project_id, scope, owner_id);
+            """
+        )
+
         _sync_fts_index(connection)
+
+
+def _migrate_memory_ownership(connection: sqlite3.Connection) -> None:
+    """Eski memories tablolarına kayıpsız scope/owner alanları ekler."""
+
+    columns = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(memories)").fetchall()
+    }
+
+    if "scope" not in columns:
+        connection.execute(
+            "ALTER TABLE memories "
+            "ADD COLUMN scope TEXT NOT NULL DEFAULT 'shared'"
+        )
+
+    if "owner_id" not in columns:
+        connection.execute("ALTER TABLE memories ADD COLUMN owner_id TEXT")
 
 
 # FTS indeks şemasının sürüm numarası.

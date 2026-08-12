@@ -434,6 +434,7 @@ class ProjectMemoryClient(AbstractAsyncContextManager["ProjectMemoryClient"]):
         content: str,
         category: str,
         importance: int = 5,
+        scope: str = "shared",
     ) -> ToolResult:
         """
         remember MCP aracını çağırır.
@@ -445,6 +446,7 @@ class ProjectMemoryClient(AbstractAsyncContextManager["ProjectMemoryClient"]):
                 "content": content,
                 "category": category,
                 "importance": importance,
+                "scope": scope,
             },
         )
 
@@ -453,6 +455,7 @@ class ProjectMemoryClient(AbstractAsyncContextManager["ProjectMemoryClient"]):
         query: str,
         category: str | None = None,
         limit: int = 5,
+        owner_id: str | None = None,
     ) -> ToolResult:
         """
         recall MCP aracını çağırır.
@@ -465,6 +468,8 @@ class ProjectMemoryClient(AbstractAsyncContextManager["ProjectMemoryClient"]):
 
         if category is not None:
             arguments["category"] = category
+        if owner_id is not None:
+            arguments["owner_id"] = owner_id
 
         return await self.call_tool("recall", arguments)
 
@@ -473,6 +478,7 @@ class ProjectMemoryClient(AbstractAsyncContextManager["ProjectMemoryClient"]):
         terms: list[str],
         category: str | None = None,
         limit: int = 5,
+        owner_id: str | None = None,
     ) -> ToolResult:
         """
         search_memories MCP aracını çağırır.
@@ -492,6 +498,8 @@ class ProjectMemoryClient(AbstractAsyncContextManager["ProjectMemoryClient"]):
 
         if category is not None:
             arguments["category"] = category
+        if owner_id is not None:
+            arguments["owner_id"] = owner_id
 
         return await self.call_tool("search_memories", arguments)
 
@@ -499,6 +507,7 @@ class ProjectMemoryClient(AbstractAsyncContextManager["ProjectMemoryClient"]):
         self,
         category: str | None = None,
         limit: int = 20,
+        owner_id: str | None = None,
     ) -> ToolResult:
         """
         list_memories MCP aracını çağırır.
@@ -510,6 +519,8 @@ class ProjectMemoryClient(AbstractAsyncContextManager["ProjectMemoryClient"]):
 
         if category is not None:
             arguments["category"] = category
+        if owner_id is not None:
+            arguments["owner_id"] = owner_id
 
         return await self.call_tool("list_memories", arguments)
 
