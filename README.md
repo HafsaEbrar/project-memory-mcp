@@ -1,268 +1,319 @@
 # ProjectMemory MCP
 
-Python, SQLite ve Model Context Protocol (MCP) kullanılarak geliştirilmiş, yapay zekâ ajanları ve normal chat uygulamaları için proje bazlı kalıcı hafıza katmanı.
+ProjectMemory, AI agentlarının proje bazlı kalıcı hafızaya erişmesini sağlayan bir **MCP (Model Context Protocol) server** uygulamasıdır.
 
-ProjectMemory, farklı yapay zekâ ajanlarının, farklı oturumların ve normal chat uygulamalarının aynı proje bazlı kalıcı hafızayı paylaşmasını sağlayan MCP tabanlı bir memory layer'dır; önemli proje bilgileri kaydedilir ve gerektiğinde tekrar hatırlanır.
+Amaç; farklı AI agentlarının aynı proje üzerinde çalışırken kararları, teknolojileri, görevleri ve önemli proje bilgilerini oturumlar arasında hatırlayabilmesini sağlamaktır.
 
-ProjectMemory içinde ayrı bir embedding modeli, vector database veya gömülü bir AI modeli yoktur. Zeka/yorumlama, bağlanan ajan veya chat LLM'i tarafından yapılır; ProjectMemory yalnızca araç ve veri erişimi sağlar.
-
-## Özellikler
-
-- MCP tabanlı proje hafızası
-- SQLite kalıcı depolama
-- FTS5 indeksli arama
-- Memory Quality (SAME / CHANGED / NEW)
-- OpenCode ve Antigravity cross-agent ortak hafıza
-- Normal Chat MCP Client + AI Service
-
-## Genel Bakış
-
-Yapay zekâ ajanları ve chat uygulamaları genellikle oturumlar arasında önemli proje bağlamını kaybedebilir. ProjectMemory, MCP uyumlu yapay zekâ uygulamalarına bağlanabilen proje bazlı kalıcı bir hafıza katmanı sağlar.
-
-Örneğin bir yapay zekâ ajanı veya chat uygulaması şu bilgileri kaydedebilir:
-
-- Proje kararları
-- Teknoloji seçimleri
-- Mimari bilgiler
-- Hata çözümleri
-- Yapılacak işler
-- Kullanıcı tercihleri
-- Oturum özetleri
-
-Kaydedilen bilgiler, daha sonraki oturumlarda ve hatta farklı agentlar veya chat uygulamaları tarafından tekrar çağrılabilir.
-
-## Nasıl Çalışır?
-
-```text
-AI Agent / Chat LLM
-       |
-       | MCP
-       v
-ProjectMemory MCP Sunucusu
-       |
-       +-- remember / update_memory / forget
-       |
-       +-- recall / search_memories / list_memories
-       |
-       v
-SQLite Veritabanı + FTS5
-```
+ProjectMemory kendi başına bir LLM veya chat uygulaması değildir. Hafıza ve retrieval katmanı olarak çalışır.
 
 ## Mimari
 
 ```text
-OpenCode --------\
-Antigravity ------> ProjectMemory MCP -> SQLite + FTS5
-Normal Chat -----/
+AI Agent / MCP Client
+        │
+        ▼
+ProjectMemory MCP
+        │
+        ├── remember
+        ├── recall
+        ├── search_memories
+        ├── list_memories
+        ├── update_memory
+        ├── forget
+        └── get_project_context
+        │
+        ▼
+SQLite + FTS5
 ```
 
-- **AI Agent / Chat LLM** doğal dili yorumlar; **ProjectMemory MCP** hafıza araçlarını sağlar.
-- **SQLite** kalıcı hafızayı saklar; **FTS5** indeksli metin araması yapar.
-- ProjectMemory içinde ayrı bir embedding modeli veya vektör veritabanı yoktur; arama FTS5 kelime indeksi üzerinden yapılır.
-- Hafıza bir agente ait değildir; kayıtlar ProjectMemory'ye aittir. Farklı MCP istemcileri (ajanlar, chat uygulamaları) aynı hafızayı paylaşabilir.
+* **MCP** → AI istemcileri ile hafıza sistemi arasındaki araç katmanı
+* **SQLite** → kalıcı veri depolama
+* **FTS5** → indeksli full-text search
+* **BM25** → arama sonuçlarının sıralanması
+* **LLM** → ProjectMemory çekirdeğinin parçası değildir
 
-### Normal Chat Mimari
+Embedding modeli veya vector database kullanılmaz.
 
-Normal chat uygulaması SQLite'a DOĞRUDAN erişmez; tüm hafıza işlemleri ProjectMemory MCP araçları üzerinden yapılır.
+## Özellikler
+
+### Proje bazlı hafıza
+
+Her proje kendi hafıza alanına sahiptir.
 
 ```text
-User
- │
- ├──> Chat LLM / AI Service
- │              │
- │              │ MCP tool call
- │              v
- │      ProjectMemoryClient (MCP stdio)
- │              │
- │              │ MCP stdio subprocess
- │              v
- │      ProjectMemory MCP
- │              │
- │              v
- │      SQLite + FTS5
+Project A
+└── kendi memory kayıtları
+
+Project B
+└── ayrı memory kayıtları
 ```
 
-### Mimari Prensip
+Projeler aynı SQLite veritabanı içerisinde `project_id` ile birbirinden izole edilir.
 
-Bu yaklaşım, Codebase-MCP benzeri bir agent/tool ayrımı kullanır; ancak ProjectMemory, Codebase MCP'nin birebir kopyası değildir. ProjectMemory, yapay zekâ ajanları için kalıcı, proje bazlı hafıza sağlamaya odaklanır.
+### Multi-agent kullanım
 
-## Memory Quality: SAME / CHANGED / NEW
+Aynı proje hafızası farklı MCP istemcileri tarafından kullanılabilir.
 
-ProjectMemory'ye yeni bir kalıcı bilgi kaydedilmeden önce agent, duplicate ve conflict kontrolü yapar. Yeni bilgi üç sınıftan birine ayrılır:
-
-- **SAME** — aynı konu, aynı temel karar/değer: kelimeler değil, taşınan karar karşılaştırılır. Paraphrase, daha açıklayıcı ifade, eş anlamlı kelimeler veya farklı cümle yapısı CHANGED değildir; temel karar aynıysa SAME'dir ve hiçbir yazma işlemi yapılmaz. Yeni kayıt oluşturulmaz, mevcut hafıza olduğu gibi kalır.
-- **CHANGED** — aynı konu fakat eski kararla çelişen/yeni karar: yeni kayıt oluşturulmaz, ilgili eski hafıza `update_memory` ile güncellenir.
-- **NEW** — gerçekten farklı/yeni bir konu: `remember` ile yeni hafıza oluşturulur.
-
-Bu davranışta katmanlar şöyle ayrılır:
-
-- **Agent** = yorumlama. Yeni bilginin anlamını yorumlar, önce `search_memories` ile ilgili mevcut hafızaları bulur ve SAME / CHANGED / NEW kararını verir.
-- **ProjectMemory MCP** = yalnızca `search_memories`, `remember` ve `update_memory` gibi araçları sağlar; anlam kararı vermez.
-- **SQLite + FTS5** = saklama ve indeksli retrieval katmanı.
-
-Herhangi bir embedding, model veya vektör veritabanı kullanılmaz; duplicate/conflict anlamı tamamen ajanın yorumuna dayanır. `remember` sunucu içindeki birebir eşleşme kontrolü yalnızca ikinci bir güvenlik katmanıdır.
-
-Aynı protokol OpenCode skill'inde (`.opencode/skills/project-memory`) ve Antigravity rule'ında (`.agents/rules/project-memory.md`) tanımlıdır; iki ajan aynı davranışı sergiler.
-
-## Normal Chat Entegrasyonu
-
-Normal bir web chat uygulaması da aynı ProjectMemory MCP sunucusuna bağlanabilir. Chat katmanının dosyaları ve görevleri:
-
-### chat/memory_client.py
-
-- Mevcut `server.py` MCP sunucusunu gerçek MCP stdio alt süreci olarak başlatır.
-- `ClientSession` kurar ve handshake (`initialize`) yapar.
-- MCP araç listesini `list_tools()` ile çeker ve cache'ler.
-- Generic `call_tool(name, arguments)` sağlar.
-- Sunucuyu her mesajda yeniden başlatmayan, uzun ömürlü bir bağlantı kullanır.
-- Hiçbir doğrudan SQLite erişimi içermez.
-
-### chat/config.py
-
-- Environment tabanlı LLM ayarları: `LLM_PROVIDER`, `LLM_API_KEY`,
-  `LLM_MODEL`, `LLM_BASE_URL`, `LLM_MAX_TOOL_CALLS`, `LLM_TIMEOUT_SECONDS`.
-- API anahtarı kaynak kodda hard-code edilmez; `.env` (Git'e işlenmez) desteklenir.
-
-### chat/prompts.py
-
-- Normal chat system prompt'unu tanımlar: kullanıcıyla sohbet, gerekince MCP araçları.
-- Memory Quality (SAME / CHANGED / NEW) protokolü.
-- Retrieval sırası: `search_memories` → yetersizse `recall` → geniş listeleme için `list_memories`.
-- Bilinmeyen cevap, arama terimi olarak tahmin edilmez.
-- `forget` yalnızca kullanıcının açık isteğinde kullanılır.
-
-### chat/ai_service.py
-
-- Sağlayıcıdan bağımsız LLM katmanı: `LLMProvider` Protocol + `OpenAICompatibleProvider`.
-- httpx ile OpenAI-compatible tool calling.
-- MCP tool schema → LLM function tool schema dönüşümü.
-- Güvenli JSON tool argument parsing (bozuk arguments → açık hata).
-- `ChatAgent` tool loop: LLM → tool call → ProjectMemoryClient → sonuç LLM'e → final text.
-- Maksimum tool call limiti (sonsuz döngüyü engeller).
-
-### Normal Chat Çalışma Akışı
-
-Bir oturumda:
-
-> Kullanıcı: "Backend için FastAPI kullanacağız, bunu hatırla."
+Örneğin:
 
 ```text
-LLM
- ↓
-search_memories
- ↓
-kayıt yok → NEW
- ↓
+OpenCode ──────┐
+Antigravity ───┼──► ProjectMemory MCP
+Başka client ──┘
+```
+
+Bir agent tarafından kaydedilen proje bilgisi daha sonra başka bir agent tarafından geri çağrılabilir.
+
+### Shared ve User Memory
+
+ProjectMemory iki hafıza scope'u destekler.
+
+#### Shared
+
+Projenin ortak hafızasıdır.
+
+Örneğin:
+
+```text
+Projede SQLite + FTS5 kullanılacak.
+```
+
+Aynı projedeki kullanıcıların ortak context'inde bulunabilir.
+
+#### User
+
+Belirli bir kullanıcının çalışma hafızasıdır.
+
+Örneğin:
+
+```text
+Ebrar bugün MCP Inspector testini tamamladı.
+```
+
+Kullanıcının kendi varsayılan context'ine dahil edilir ancak başka kullanıcıların normal hafıza sonuçlarına otomatik olarak karışmaz.
+
+Başka bir kullanıcının çalışma geçmişi gerektiğinde `owner_id` filtresiyle açıkça sorgulanabilir.
+
+### Project Context
+
+`get_project_context` aracı yeni bir agentın aktif projedeki önemli hafıza kayıtlarını tek çağrıyla almasını sağlar.
+
+Kayıtlar öncelikle:
+
+```text
+importance DESC
+updated_at DESC
+id DESC
+```
+
+mantığıyla değerlendirilir.
+
+Kategori çeşitliliği yalnızca aynı importance seviyesindeki kayıtlar arasında yardımcı kriter olarak kullanılır.
+
+## MCP Araçları
+
+| Tool                  | Açıklama                                          |
+| --------------------- | ------------------------------------------------- |
+| `remember`            | Yeni bir bilgiyi kalıcı proje hafızasına kaydeder |
+| `recall`              | Geçmiş hafıza kayıtlarını geri çağırır            |
+| `search_memories`     | FTS5 üzerinden hafızalarda arama yapar            |
+| `list_memories`       | Aktif projedeki hafıza kayıtlarını listeler       |
+| `update_memory`       | Mevcut hafıza kaydını günceller                   |
+| `forget`              | Hafıza kaydını siler                              |
+| `get_project_context` | Projenin önemli hafıza kayıtlarını getirir        |
+
+## Memory Quality
+
+Yeni bilgiler doğrudan kontrolsüz şekilde eklenmek yerine üç durumda değerlendirilir:
+
+```text
+SAME
+→ Aynı bilgi zaten mevcut.
+→ Yeni kayıt oluşturulmaz.
+
+CHANGED
+→ Aynı konu hakkında karar/değer değişmiştir.
+→ Mevcut kayıt güncellenir.
+
+NEW
+→ Gerçekten yeni bir bilgidir.
+→ Yeni memory oluşturulur.
+```
+
+Bu yapı gereksiz duplicate hafıza kayıtlarının oluşmasını azaltır.
+
+## Kurulum
+
+Repository'yi klonlayın:
+
+```bash
+git clone https://github.com/HafsaEbrar/project-memory-mcp.git
+cd project-memory-mcp
+```
+
+Sanal ortam oluşturun.
+
+Windows:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
+Bağımlılıkları yükleyin:
+
+```bash
+pip install -r requirements.txt
+```
+
+## MCP Server'ı Çalıştırma
+
+```powershell
+.\.venv\Scripts\python.exe server.py
+```
+
+MCP Inspector ile çalıştırmak için:
+
+```powershell
+npx @modelcontextprotocol/inspector .\.venv\Scripts\python.exe server.py
+```
+
+## Kullanıcı Bazlı Hafıza
+
+User-scoped memory kullanmak için server tarafında kullanıcı kimliği tanımlanmalıdır.
+
+PowerShell:
+
+```powershell
+$env:PROJECT_MEMORY_USER_ID="ebrar"
+```
+
+Ardından MCP server başlatılır.
+
+```powershell
+npx @modelcontextprotocol/inspector `
+  -e PROJECT_MEMORY_USER_ID=ebrar `
+  .\.venv\Scripts\python.exe server.py
+```
+
+Kullanıcı kimliği `remember` tool'u üzerinden değiştirilemez. `scope=user` kayıtlarının sahibi server configuration üzerinden belirlenir.
+
+## Özel Database Yolu
+
+Varsayılan database yerine farklı bir SQLite dosyası kullanmak için:
+
+```powershell
+$env:PROJECT_MEMORY_DB_PATH="C:\path\to\memories.db"
+```
+
+Inspector örneği:
+
+```powershell
+npx @modelcontextprotocol/inspector `
+  -e PROJECT_MEMORY_USER_ID=ebrar `
+  -e PROJECT_MEMORY_DB_PATH=C:\path\to\memories.db `
+  .\.venv\Scripts\python.exe server.py
+```
+
+Bu özellik test veya farklı çalışma ortamlarını birbirinden ayırmak için kullanılabilir.
+
+## Örnek Akış
+
+Bir kullanıcı proje bilgisi kaydeder:
+
+```text
 remember
- ↓
-ProjectMemory → SQLite
+
+content:
+"Projede SQLite + FTS5 kullanılacak."
+
+category:
+technology
+
+importance:
+8
+
+scope:
+shared
 ```
 
-Başka bir oturumda:
-
-> Kullanıcı: "Backend için hangi framework'ü seçmiştik?"
+Daha sonra aynı projeye bağlanan başka bir agent bu bilgiyi:
 
 ```text
-LLM
- ↓
-search_memories terms: ["backend", "framework", "api"]
- ↓
-FastAPI kaydı bulunur
- ↓
-LLM: "FastAPI'yi seçmiştik."
+search_memories
 ```
 
-Not: Model, cevabı önceden bilmediği için "fastapi" kelimesini arama terimi olarak tahmin etmemelidir; arama terimleri yalnızca kullanıcının sorusundan çıkarılır.
+veya:
 
-## OpenCode kurulumu
-
-Örnek yapılandırma `integrations/opencode.example.json` dosyasında bulunur. İçerisindeki `<PROJECT_ROOT>` değerini kendi proje yolunla değiştirip dosyayı `opencode.json` olarak proje köküne kopyala:
-
-```json
-{
-  "mcp": {
-    "project_memory": {
-      "type": "local",
-      "command": [
-        "<PROJECT_ROOT>/.venv/Scripts/python.exe",
-        "<PROJECT_ROOT>/server.py"
-      ],
-      "cwd": "<PROJECT_ROOT>",
-      "enabled": true
-    }
-  }
-}
+```text
+get_project_context
 ```
 
-`opencode.json` bilgisayara özeldir ve `.gitignore` ile Git'ten hariç tutulur.
+üzerinden kullanabilir.
 
-## Antigravity CLI kurulumu
+User-scoped kayıt örneği:
 
-Antigravity, workspace config olarak `.agents/mcp_config.json` dosyasını kullanır. Örnek yapılandırma `integrations/antigravity.example.json` dosyasında bulunur:
+```text
+remember
 
-```json
-{
-  "mcpServers": {
-    "project_memory": {
-      "command": "<PROJECT_ROOT>/.venv/Scripts/python.exe",
-      "args": [
-        "<PROJECT_ROOT>/server.py"
-      ],
-      "cwd": "<PROJECT_ROOT>"
-    }
-  }
-}
+content:
+"Bugün API testlerini tamamladım."
+
+category:
+decision
+
+importance:
+8
+
+scope:
+user
 ```
 
-`<PROJECT_ROOT>` değerini kendi proje yolunla değiştir. Bu dosya da bilgisayara özeldir ve `.gitignore` ile Git'ten hariç tutulur.
-
-Antigravity içinde bağlantıyı `/mcp` komutuyla kontrol edebilirsin. Beklenen araçlar: `remember`, `recall`, `search_memories`, `list_memories`, `update_memory`, `forget`.
-
-## Cross-Agent Demo
-
-Bu senaryo, ProjectMemory'nin tek bir agente bağlı olmadığını kanıtlayan gerçek bir testtir.
-
-1. **Antigravity**:
-
-   > Bu projede ikinci MCP agentı olarak Antigravity kullanılıyor.
-   > Bunu proje hafızasına kaydet.
-
-   → `project_memory/remember`
-   → `SQLite memories.db`
-
-2. **OpenCode** (daha sonraki bir oturumda):
-
-   > Bu projede ikinci MCP agentı olarak hangisini kullanıyoruz?
-
-   → ProjectMemory'den kayıt okunur
-   → **Antigravity**
-
-Bir agentın yazdığı kayıt, başka bir agent tarafından doğru şekilde okunabildi. Bu, hafızanın tek bir agente ait olmadığını, ProjectMemory katmanında paylaşıldığını gösterir.
+Bu kayıt varsayılan olarak yalnızca mevcut kullanıcının çalışma context'ine dahil edilir.
 
 ## Testler
 
-OpenCode ve Antigravity CLI, aynı ProjectMemory MCP sunucusuna ve aynı SQLite hafızasına bağlanarak gerçek olarak test edilmiştir. MCP uyumlu diğer istemciler de aynı sunucuya bağlanabilir; ancak henüz test edilmemiş istemciler "destekleniyor" olarak kesin şekilde ifade edilmez.
+Tüm testleri çalıştırmak için:
 
-### tests/test_mcp_server.py
+```bash
+python -m pytest
+```
 
-- MCP sunucusunun bellek içi istemci ile testi.
-- Araç listesi, remember, recall, search_memories, list_memories,
-  update_memory, forget ve FTS5 davranışları.
+Clean installation üzerinde test paketi:
 
-### tests/test_chat_memory_client.py
+```text
+25 passed
+```
 
-- Gerçek MCP subprocess üzerinden smoke testi.
-- 6 aracın varlığını doğrular (remember, recall, search_memories,
-  list_memories, update_memory, forget).
-- remember → search → update → forget akışı.
-- Geçici (temp) SQLite DB kullanır; production `data/memories.db` korunur.
+olarak doğrulanmıştır.
 
-### tests/test_chat_ai_service.py
+Testler production `data/memories.db` dosyasını değiştirmeyecek şekilde izole edilir.
 
-- Gerçek ücretli LLM API çağrısı yapmaz; fake/mock provider kullanır.
-- Normal text parse, tool call parse, JSON arguments.
-- Bozuk arguments için açık hata.
-- MCP schema → OpenAI tool schema dönüşümü.
-- ChatAgent: search → remember → final akışı ve maksimum tool loop testi.
+## Teknolojiler
 
-Testlerin tamamında production `data/memories.db` değiştirilmez.
+* Python
+* MCP 2.0
+* SQLite
+* SQLite FTS5
+* Pydantic
+* Pytest
+* FastAPI
+* HTTPX
+
+## Tasarım İlkeleri
+
+ProjectMemory'nin temel yaklaşımı:
+
+```text
+Agent = yorumlama ve karar verme
+
+MCP = araç ve iletişim katmanı
+
+ProjectMemory = kalıcı proje hafızası
+
+SQLite + FTS5 = storage ve retrieval
+```
+
+ProjectMemory içerisinde embedding modeli, vector database veya ek bir AI modeli bulunmaz.
+
+Bu sayede hafıza sistemi kullanılan AI modelinden veya agent platformundan bağımsız kalır.
