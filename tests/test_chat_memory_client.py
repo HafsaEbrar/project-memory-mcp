@@ -46,6 +46,7 @@ os.environ["PROJECT_MEMORY_DB_PATH"] = str(_TEST_DB_PATH)
 print(f"Chat test database: {_TEST_DB_PATH}")
 
 EXPECTED_TOOL_NAMES = {
+    "get_project_context",
     "remember",
     "recall",
     "search_memories",
@@ -108,7 +109,7 @@ async def main() -> None:
         print("MCP araçları:", sorted(client.tool_names))
 
         assert set(client.tool_names) == EXPECTED_TOOL_NAMES, (
-            "MCP araç listesinde beklenen 6 aracın tamamı bulunmalıdır."
+            "MCP araç listesinde beklenen araçların tamamı bulunmalıdır."
         )
 
         # C) remember

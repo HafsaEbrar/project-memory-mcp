@@ -1,3 +1,4 @@
+import os
 import sqlite3
 
 from project_memory.database import get_database, initialize_database
@@ -10,6 +11,8 @@ from project_memory.schemas import (
     MemorySearchResult,
     MemoryUpdate,
     ProjectContext,
+    ProjectContextRequest,
+    ProjectContextResponse,
     ProjectRecord,
 )
 
@@ -45,6 +48,38 @@ class MemoryService:
         """
 
         return MemoryRecord.model_validate(dict(row))
+
+    @staticmethod
+    def _current_user_id() -> str | None:
+        user_id = os.environ.get("PROJECT_MEMORY_USER_ID", "").strip()
+        if not user_id:
+            return None
+        if len(user_id) > 200:
+            raise ValueError("PROJECT_MEMORY_USER_ID en fazla 200 karakter olabilir.")
+        return user_id
+
+    @classmethod
+    def _visibility_filter(
+        cls,
+        owner_id: str | None,
+        table_alias: str = "",
+    ) -> tuple[str, list[object]]:
+        prefix = f"{table_alias}." if table_alias else ""
+        if owner_id is not None:
+            return (
+                f"AND {prefix}scope = 'user' AND {prefix}owner_id = ?",
+                [owner_id],
+            )
+
+        current_user_id = cls._current_user_id()
+        if current_user_id is None:
+            return (f"AND {prefix}scope = 'shared'", [])
+
+        return (
+            f"AND ({prefix}scope = 'shared' OR "
+            f"({prefix}scope = 'user' AND {prefix}owner_id = ?))",
+            [current_user_id],
+        )
 
     def get_or_create_project(
         self,
@@ -123,6 +158,14 @@ class MemoryService:
         """
 
         project = self.get_or_create_project(context)
+        current_user_id = self._current_user_id()
+        owner_id = None
+        if memory.scope.value == "user":
+            if current_user_id is None:
+                raise ValueError(
+                    "scope=user için PROJECT_MEMORY_USER_ID yapılandırılmalıdır."
+                )
+            owner_id = current_user_id
 
         with get_database() as connection:
             existing_memory_row = connection.execute(
@@ -133,17 +176,23 @@ class MemoryService:
                     content,
                     category,
                     importance,
+                    scope,
+                    owner_id,
                     created_at,
                     updated_at
                 FROM memories
                 WHERE project_id = ?
                   AND content = ?
                   AND category = ?
+                  AND scope = ?
+                  AND owner_id IS ?
                 """,
                 (
                     project.id,
                     memory.content,
                     memory.category.value,
+                    memory.scope.value,
+                    owner_id,
                 ),
             ).fetchone()
 
@@ -157,14 +206,18 @@ class MemoryService:
                     content,
                     category,
                     importance
+                    , scope
+                    , owner_id
                 )
-                VALUES (?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
                     project.id,
                     memory.content,
                     memory.category.value,
                     memory.importance,
+                    memory.scope.value,
+                    owner_id,
                 ),
             )
 
@@ -176,6 +229,8 @@ class MemoryService:
                     content,
                     category,
                     importance,
+                    scope,
+                    owner_id,
                     created_at,
                     updated_at
                 FROM memories
@@ -212,6 +267,8 @@ class MemoryService:
                 content,
                 category,
                 importance,
+                scope,
+                owner_id,
                 created_at,
                 updated_at
             FROM memories
@@ -223,6 +280,12 @@ class MemoryService:
             project.id,
             f"%{search.query}%",
         ]
+
+        visibility_sql, visibility_parameters = self._visibility_filter(
+            search.owner_id
+        )
+        sql += f"\n{visibility_sql}\n"
+        parameters.extend(visibility_parameters)
 
         if search.category is not None:
             sql += """
@@ -249,6 +312,79 @@ class MemoryService:
             self._memory_from_row(row)
             for row in memory_rows
         ]
+
+    def get_project_context(
+        self,
+        context: ProjectContext,
+        request: ProjectContextRequest,
+    ) -> ProjectContextResponse:
+        """Shared ve current-user kayıtlarından önem öncelikli context üretir."""
+
+        project = self.get_or_create_project(context)
+        visibility_sql, visibility_parameters = self._visibility_filter(None)
+
+        with get_database() as connection:
+            total_memories = connection.execute(
+                f"SELECT COUNT(*) FROM memories WHERE project_id = ? "
+                f"{visibility_sql}",
+                (project.id, *visibility_parameters),
+            ).fetchone()[0]
+            rows = connection.execute(
+                f"""
+                SELECT id, project_id, content, category, importance,
+                       scope, owner_id, created_at, updated_at
+                FROM memories
+                WHERE project_id = ?
+                {visibility_sql}
+                ORDER BY importance DESC, updated_at DESC, id DESC
+                """,
+                (project.id, *visibility_parameters),
+            ).fetchall()
+
+        unique_memories: list[MemoryRecord] = []
+        seen_content: set[str] = set()
+        for row in rows:
+            memory = self._memory_from_row(row)
+            if memory.content in seen_content:
+                continue
+            seen_content.add(memory.content)
+            unique_memories.append(memory)
+
+        selected: list[MemoryRecord] = []
+        represented_categories: set[str] = set()
+        start = 0
+        while start < len(unique_memories) and len(selected) < request.limit:
+            importance = unique_memories[start].importance
+            end = start
+            while (
+                end < len(unique_memories)
+                and unique_memories[end].importance == importance
+            ):
+                end += 1
+
+            diverse: list[MemoryRecord] = []
+            remaining: list[MemoryRecord] = []
+            group_categories = set(represented_categories)
+            for memory in unique_memories[start:end]:
+                category = memory.category.value
+                if category not in group_categories:
+                    diverse.append(memory)
+                    group_categories.add(category)
+                else:
+                    remaining.append(memory)
+
+            for memory in diverse + remaining:
+                selected.append(memory)
+                represented_categories.add(memory.category.value)
+                if len(selected) == request.limit:
+                    break
+            start = end
+
+        return ProjectContextResponse(
+            project=project,
+            total_memories=total_memories,
+            memories=selected,
+        )
 
     @staticmethod
     def _fts_phrase(term: str) -> str:
@@ -299,6 +435,8 @@ class MemoryService:
                 m.content,
                 m.category,
                 m.importance,
+                m.scope,
+                m.owner_id,
                 m.created_at,
                 m.updated_at,
                 bm25(memories_fts) AS rank
@@ -313,6 +451,13 @@ class MemoryService:
             match_query,
             project.id,
         ]
+
+        visibility_sql, visibility_parameters = self._visibility_filter(
+            search.owner_id,
+            "m",
+        )
+        sql += f"\n{visibility_sql}\n"
+        parameters.extend(visibility_parameters)
 
         if search.category is not None:
             sql += """
@@ -394,6 +539,7 @@ class MemoryService:
 
         parameters.append(memory_id)
         parameters.append(project.id)
+        parameters.append(self._current_user_id())
 
         with get_database() as connection:
             cursor = connection.execute(
@@ -402,6 +548,7 @@ class MemoryService:
                 SET {", ".join(set_clauses)}
                 WHERE id = ?
                   AND project_id = ?
+                  AND (scope = 'shared' OR (scope = 'user' AND owner_id = ?))
                 """,
                 tuple(parameters),
             )
@@ -421,6 +568,8 @@ class MemoryService:
                     content,
                     category,
                     importance,
+                    scope,
+                    owner_id,
                     created_at,
                     updated_at
                 FROM memories
@@ -467,13 +616,16 @@ class MemoryService:
                     content,
                     category,
                     importance,
+                    scope,
+                    owner_id,
                     created_at,
                     updated_at
                 FROM memories
                 WHERE id = ?
                   AND project_id = ?
+                  AND (scope = 'shared' OR (scope = 'user' AND owner_id = ?))
                 """,
-                (memory_id, project.id),
+                (memory_id, project.id, self._current_user_id()),
             ).fetchone()
 
             if memory_row is None:
@@ -488,8 +640,9 @@ class MemoryService:
                 DELETE FROM memories
                 WHERE id = ?
                   AND project_id = ?
+                  AND (scope = 'shared' OR (scope = 'user' AND owner_id = ?))
                 """,
-                (memory_id, project.id),
+                (memory_id, project.id, self._current_user_id()),
             )
 
         return self._memory_from_row(memory_row)
@@ -516,6 +669,8 @@ class MemoryService:
                 content,
                 category,
                 importance,
+                scope,
+                owner_id,
                 created_at,
                 updated_at
             FROM memories
@@ -523,6 +678,12 @@ class MemoryService:
         """
 
         parameters: list[object] = [project.id]
+
+        visibility_sql, visibility_parameters = self._visibility_filter(
+            list_request.owner_id
+        )
+        sql += f"\n{visibility_sql}\n"
+        parameters.extend(visibility_parameters)
 
         if list_request.category is not None:
             sql += """

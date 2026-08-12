@@ -58,6 +58,47 @@ def _direct_connection() -> sqlite3.Connection:
     return connection
 
 
+def _test_ownership_migration() -> None:
+    active_db = os.environ["PROJECT_MEMORY_DB_PATH"]
+    legacy_db = Path(_TEMP_DB_DIR.name) / "legacy-memories.db"
+    with closing(sqlite3.connect(legacy_db)) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE projects (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                root_path TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE memories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                category TEXT NOT NULL,
+                importance INTEGER NOT NULL DEFAULT 5,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            INSERT INTO projects (name, root_path) VALUES ('legacy', '/legacy');
+            INSERT INTO memories (project_id, content, category, importance)
+            VALUES (1, 'Korunacak production benzeri kayıt.', 'decision', 8);
+            """
+        )
+        connection.commit()
+
+    try:
+        os.environ["PROJECT_MEMORY_DB_PATH"] = str(legacy_db)
+        initialize_database()
+        with closing(sqlite3.connect(legacy_db)) as connection:
+            row = connection.execute(
+                "SELECT content, scope, owner_id FROM memories"
+            ).fetchone()
+        assert row == ("Korunacak production benzeri kayıt.", "shared", None)
+    finally:
+        os.environ["PROJECT_MEMORY_DB_PATH"] = active_db
+
+
 async def _search_memories(
     client: Client,
     terms: list[str],
@@ -89,6 +130,166 @@ async def _search_memories(
     return result.structured_content["result"]
 
 
+async def _test_project_context(client: Client) -> None:
+    original_root = os.environ.get("PROJECT_MEMORY_ROOT")
+    project_a = Path(_TEMP_DB_DIR.name) / "context-project-a"
+    project_b = Path(_TEMP_DB_DIR.name) / "context-project-b"
+    project_a.mkdir()
+    project_b.mkdir()
+
+    try:
+        os.environ["PROJECT_MEMORY_ROOT"] = str(project_a)
+        empty = await client.call_tool("get_project_context", {})
+        assert not empty.is_error
+        assert empty.structured_content["memories"] == []
+
+        records = [
+            ("Aynı exact proje kararı.", "technology", 10),
+            ("Mimari sınırlar modüllerle korunur.", "architecture", 9),
+            ("Aynı exact proje kararı.", "decision", 9),
+            ("Yüksek önemde teknoloji kaydı 1.", "technology", 8),
+            ("Yüksek önemde teknoloji kaydı 2.", "technology", 8),
+            ("Yüksek önemde teknoloji kaydı 3.", "technology", 8),
+            ("Düşük önemde farklı kategori.", "preference", 4),
+        ]
+        for content, category, importance in records:
+            result = await client.call_tool(
+                "remember",
+                {"content": content, "category": category,
+                 "importance": importance},
+            )
+            assert not result.is_error
+
+        context = await client.call_tool("get_project_context", {"limit": 5})
+        memories = context.structured_content["memories"]
+        assert [memory["importance"] for memory in memories] == [10, 9, 8, 8, 8]
+        assert sum(memory["content"] == "Aynı exact proje kararı." for memory in memories) == 1
+        assert "Düşük önemde farklı kategori." not in {
+            memory["content"] for memory in memories
+        }
+
+        os.environ["PROJECT_MEMORY_ROOT"] = str(project_b)
+        isolated = await client.call_tool("get_project_context", {})
+        assert isolated.structured_content["memories"] == []
+    finally:
+        if original_root is None:
+            os.environ.pop("PROJECT_MEMORY_ROOT", None)
+        else:
+            os.environ["PROJECT_MEMORY_ROOT"] = original_root
+
+
+async def _test_memory_ownership(client: Client) -> None:
+    original_root = os.environ.get("PROJECT_MEMORY_ROOT")
+    original_user = os.environ.get("PROJECT_MEMORY_USER_ID")
+    project_root = Path(_TEMP_DB_DIR.name) / "ownership-project"
+    project_root.mkdir()
+
+    try:
+        os.environ["PROJECT_MEMORY_ROOT"] = str(project_root)
+        os.environ["PROJECT_MEMORY_USER_ID"] = "ebrar"
+
+        shared = await client.call_tool(
+            "remember",
+            {"content": "SQLite ortak karar olarak kullanılacak.",
+             "category": "decision", "importance": 9, "scope": "shared"},
+        )
+        ebrar = await client.call_tool(
+            "remember",
+            {"content": "Aynı içerikli kişisel çalışma kaydı.",
+             "category": "todo", "importance": 7, "scope": "user"},
+        )
+        assert not shared.is_error and not ebrar.is_error
+        assert shared.structured_content["owner_id"] is None
+        assert ebrar.structured_content["owner_id"] == "ebrar"
+
+        os.environ["PROJECT_MEMORY_USER_ID"] = "ayse"
+        ayse = await client.call_tool(
+            "remember",
+            {"content": "Aynı içerikli kişisel çalışma kaydı.",
+             "category": "todo", "importance": 7, "scope": "user"},
+        )
+        ayse_fts = await client.call_tool(
+            "remember",
+            {"content": "Ayşe ownership API testlerini düzenledi.",
+             "category": "session_summary", "importance": 8, "scope": "user"},
+        )
+        assert not ayse.is_error and not ayse_fts.is_error
+        assert ayse.structured_content["id"] != ebrar.structured_content["id"]
+        assert ayse.structured_content["owner_id"] == "ayse"
+        ayse_context = await client.call_tool(
+            "get_project_context", {"limit": 20}
+        )
+        ayse_context_ids = {
+            item["id"]
+            for item in ayse_context.structured_content["memories"]
+        }
+        assert shared.structured_content["id"] in ayse_context_ids
+        assert ebrar.structured_content["id"] not in ayse_context_ids
+
+        os.environ["PROJECT_MEMORY_USER_ID"] = "ebrar"
+        default_list = await client.call_tool("list_memories", {"limit": 20})
+        default_recall = await client.call_tool(
+            "recall", {"query": "kişisel çalışma", "limit": 20}
+        )
+        default_search = await client.call_tool(
+            "search_memories", {"terms": ["ownership"], "limit": 20}
+        )
+        context = await client.call_tool("get_project_context", {"limit": 20})
+
+        default_ids = {item["id"] for item in default_list.structured_content["result"]}
+        assert shared.structured_content["id"] in default_ids
+        assert ebrar.structured_content["id"] in default_ids
+        assert ayse.structured_content["id"] not in default_ids
+        assert [item["owner_id"] for item in default_recall.structured_content["result"]] == ["ebrar"]
+        assert default_search.structured_content["result"] == []
+        context_ids = {item["id"] for item in context.structured_content["memories"]}
+        assert shared.structured_content["id"] in context_ids
+        assert ebrar.structured_content["id"] in context_ids
+        assert ayse.structured_content["id"] not in context_ids
+
+        explicit_list = await client.call_tool(
+            "list_memories", {"owner_id": "ayse", "limit": 20}
+        )
+        explicit_recall = await client.call_tool(
+            "recall", {"query": "kişisel çalışma", "owner_id": "ayse"}
+        )
+        explicit_search = await client.call_tool(
+            "search_memories", {"terms": ["ownership"], "owner_id": "ayse"}
+        )
+        explicit_ids = {
+            item["id"] for item in explicit_list.structured_content["result"]
+        }
+        assert ayse.structured_content["id"] in explicit_ids
+        assert shared.structured_content["id"] not in explicit_ids
+        assert explicit_recall.structured_content["result"][0]["owner_id"] == "ayse"
+        assert explicit_search.structured_content["result"][0]["owner_id"] == "ayse"
+
+        denied_update = await client.call_tool(
+            "update_memory",
+            {"memory_id": ayse.structured_content["id"], "importance": 10},
+        )
+        denied_forget = await client.call_tool(
+            "forget", {"memory_id": ayse.structured_content["id"]}
+        )
+        assert denied_update.is_error
+        assert denied_forget.is_error
+
+        other_project = Path(_TEMP_DB_DIR.name) / "ownership-other-project"
+        other_project.mkdir()
+        os.environ["PROJECT_MEMORY_ROOT"] = str(other_project)
+        isolated_list = await client.call_tool("list_memories", {"limit": 20})
+        assert isolated_list.structured_content["result"] == []
+    finally:
+        if original_root is None:
+            os.environ.pop("PROJECT_MEMORY_ROOT", None)
+        else:
+            os.environ["PROJECT_MEMORY_ROOT"] = original_root
+        if original_user is None:
+            os.environ.pop("PROJECT_MEMORY_USER_ID", None)
+        else:
+            os.environ["PROJECT_MEMORY_USER_ID"] = original_user
+
+
 async def main() -> None:
     """
     MCP sunucusuna bellek içinde bağlanır.
@@ -96,6 +297,8 @@ async def main() -> None:
     Araçları listeler, bir hafıza kaydeder
     ve ardından bu hafızayı tekrar arar.
     """
+
+    _test_ownership_migration()
 
     async with Client(mcp) as client:
         tools_result = await client.list_tools()
@@ -122,6 +325,10 @@ async def main() -> None:
         assert "forget" in tool_names, (
             "MCP araç listesinde forget bulunmalı."
         )
+
+        assert "get_project_context" in tool_names
+        await _test_project_context(client)
+        await _test_memory_ownership(client)
 
         remember_result = await client.call_tool(
             "remember",

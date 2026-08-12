@@ -2,6 +2,7 @@ from mcp.server import MCPServer
 
 from project_memory.tools import (
     forget_memory as forget_memory_tool,
+    get_project_context as get_project_context_tool,
     list_memories as list_memories_tool,
     recall_memories,
     remember_memory,
@@ -19,7 +20,8 @@ def remember(
     content: str,
     category: str,
     importance: int = 5,
-) -> dict[str, str | int]:
+    scope: str = "shared",
+) -> dict[str, object]:
     """
     Aktif projeye önemli bir bilgiyi kalıcı olarak kaydeder.
 
@@ -39,6 +41,7 @@ def remember(
         content=content,
         category=category,
         importance=importance,
+        scope=scope,
     )
 
 
@@ -47,7 +50,8 @@ def recall(
     query: str,
     category: str | None = None,
     limit: int = 5,
-) -> list[dict[str, str | int]]:
+    owner_id: str | None = None,
+) -> list[dict[str, object]]:
     """
     Aktif projeye ait geçmiş hafızalarda arama yapar.
 
@@ -66,6 +70,7 @@ def recall(
         query=query,
         category=category,
         limit=limit,
+        owner_id=owner_id,
     )
 
 
@@ -74,6 +79,7 @@ def search_memories(
     terms: list[str],
     category: str | None = None,
     limit: int = 5,
+    owner_id: str | None = None,
 ) -> list[dict[str, object]]:
     """
     Aktif projeye ait hafızalarda SQLite FTS5 tabanlı indeksli arama yapar.
@@ -101,6 +107,7 @@ def search_memories(
         terms=terms,
         category=category,
         limit=limit,
+        owner_id=owner_id,
     )
 
 
@@ -110,7 +117,7 @@ def update_memory(
     content: str | None = None,
     category: str | None = None,
     importance: int | None = None,
-) -> dict[str, str | int]:
+) -> dict[str, object]:
     """
     Aktif projeye ait kayıtlı bir hafızayı günceller.
 
@@ -141,7 +148,7 @@ def update_memory(
 @mcp.tool()
 def forget(
     memory_id: int,
-) -> dict[str, str | int]:
+) -> dict[str, object]:
     """
     Aktif projeye ait kayıtlı bir hafızayı kalıcı olarak siler.
 
@@ -164,7 +171,8 @@ def forget(
 def list_memories(
     category: str | None = None,
     limit: int = 20,
-) -> list[dict[str, str | int]]:
+    owner_id: str | None = None,
+) -> list[dict[str, object]]:
     """
     Aktif projeye ait geçmiş hafızaları listeler.
 
@@ -180,7 +188,15 @@ def list_memories(
     return list_memories_tool(
         category=category,
         limit=limit,
+        owner_id=owner_id,
     )
+
+
+@mcp.tool()
+def get_project_context(limit: int = 10) -> dict[str, object]:
+    """Shared ve current-user hafızalarından proje context'i döndürür."""
+
+    return get_project_context_tool(limit=limit)
 
 
 if __name__ == "__main__":
