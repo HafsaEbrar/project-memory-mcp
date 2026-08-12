@@ -89,6 +89,54 @@ async def _search_memories(
     return result.structured_content["result"]
 
 
+async def _test_project_context(client: Client) -> None:
+    original_root = os.environ.get("PROJECT_MEMORY_ROOT")
+    project_a = Path(_TEMP_DB_DIR.name) / "context-project-a"
+    project_b = Path(_TEMP_DB_DIR.name) / "context-project-b"
+    project_a.mkdir()
+    project_b.mkdir()
+
+    try:
+        os.environ["PROJECT_MEMORY_ROOT"] = str(project_a)
+        empty = await client.call_tool("get_project_context", {})
+        assert not empty.is_error
+        assert empty.structured_content["memories"] == []
+
+        records = [
+            ("Aynı exact proje kararı.", "technology", 10),
+            ("Mimari sınırlar modüllerle korunur.", "architecture", 9),
+            ("Aynı exact proje kararı.", "decision", 9),
+            ("Yüksek önemde teknoloji kaydı 1.", "technology", 8),
+            ("Yüksek önemde teknoloji kaydı 2.", "technology", 8),
+            ("Yüksek önemde teknoloji kaydı 3.", "technology", 8),
+            ("Düşük önemde farklı kategori.", "preference", 4),
+        ]
+        for content, category, importance in records:
+            result = await client.call_tool(
+                "remember",
+                {"content": content, "category": category,
+                 "importance": importance},
+            )
+            assert not result.is_error
+
+        context = await client.call_tool("get_project_context", {"limit": 5})
+        memories = context.structured_content["memories"]
+        assert [memory["importance"] for memory in memories] == [10, 9, 8, 8, 8]
+        assert sum(memory["content"] == "Aynı exact proje kararı." for memory in memories) == 1
+        assert "Düşük önemde farklı kategori." not in {
+            memory["content"] for memory in memories
+        }
+
+        os.environ["PROJECT_MEMORY_ROOT"] = str(project_b)
+        isolated = await client.call_tool("get_project_context", {})
+        assert isolated.structured_content["memories"] == []
+    finally:
+        if original_root is None:
+            os.environ.pop("PROJECT_MEMORY_ROOT", None)
+        else:
+            os.environ["PROJECT_MEMORY_ROOT"] = original_root
+
+
 async def main() -> None:
     """
     MCP sunucusuna bellek içinde bağlanır.
@@ -122,6 +170,9 @@ async def main() -> None:
         assert "forget" in tool_names, (
             "MCP araç listesinde forget bulunmalı."
         )
+
+        assert "get_project_context" in tool_names
+        await _test_project_context(client)
 
         remember_result = await client.call_tool(
             "remember",

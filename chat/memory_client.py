@@ -513,6 +513,9 @@ class ProjectMemoryClient(AbstractAsyncContextManager["ProjectMemoryClient"]):
 
         return await self.call_tool("list_memories", arguments)
 
+    async def get_project_context(self, limit: int = 10) -> ToolResult:
+        return await self.call_tool("get_project_context", {"limit": limit})
+
     async def update_memory(
         self,
         memory_id: int,

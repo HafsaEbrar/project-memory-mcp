@@ -8,6 +8,7 @@ from project_memory.schemas import (
     MemoryListRequest,
     MemorySearchRequest,
     MemoryUpdate,
+    ProjectContextRequest,
 )
 
 
@@ -410,3 +411,12 @@ def list_memories(
         memory.model_dump(mode="json")
         for memory in results
     ]
+
+
+def get_project_context(limit: int = 10) -> dict[str, object]:
+    context = resolve_project_context()
+    result = memory_service.get_project_context(
+        context=context,
+        request=ProjectContextRequest(limit=limit),
+    )
+    return result.model_dump(mode="json")

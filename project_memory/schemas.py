@@ -229,6 +229,12 @@ class MemoryListRequest(BaseModel):
     )
 
 
+class ProjectContextRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    limit: int = Field(default=10, ge=1, le=100)
+
+
 class ProjectRecord(BaseModel):
     """
     SQLite veritabanından okunan tam proje kaydı.
@@ -271,6 +277,12 @@ class MemorySearchResult(BaseModel):
             "FTS5 bm25() sıralama puanı. Düşük değer daha iyi eşleşme demektir."
         ),
     )
+
+
+class ProjectContextResponse(BaseModel):
+    project: ProjectRecord
+    total_memories: int
+    memories: list[MemoryRecord]
 
 
 class ProjectContextResponse(BaseModel):

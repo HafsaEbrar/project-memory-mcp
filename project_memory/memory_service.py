@@ -10,6 +10,8 @@ from project_memory.schemas import (
     MemorySearchResult,
     MemoryUpdate,
     ProjectContext,
+    ProjectContextRequest,
+    ProjectContextResponse,
     ProjectRecord,
 )
 
@@ -249,6 +251,75 @@ class MemoryService:
             self._memory_from_row(row)
             for row in memory_rows
         ]
+
+    def get_project_context(
+        self,
+        context: ProjectContext,
+        request: ProjectContextRequest,
+    ) -> ProjectContextResponse:
+        """Aktif projenin önem öncelikli ve çeşitli bağlamını döndürür."""
+
+        project = self.get_or_create_project(context)
+        with get_database() as connection:
+            total_memories = connection.execute(
+                "SELECT COUNT(*) FROM memories WHERE project_id = ?",
+                (project.id,),
+            ).fetchone()[0]
+            rows = connection.execute(
+                """
+                SELECT id, project_id, content, category, importance,
+                       created_at, updated_at
+                FROM memories
+                WHERE project_id = ?
+                ORDER BY importance DESC, updated_at DESC, id DESC
+                """,
+                (project.id,),
+            ).fetchall()
+
+        unique_memories: list[MemoryRecord] = []
+        seen_content: set[str] = set()
+        for row in rows:
+            memory = self._memory_from_row(row)
+            if memory.content in seen_content:
+                continue
+            seen_content.add(memory.content)
+            unique_memories.append(memory)
+
+        selected: list[MemoryRecord] = []
+        represented_categories: set[str] = set()
+        start = 0
+        while start < len(unique_memories) and len(selected) < request.limit:
+            importance = unique_memories[start].importance
+            end = start
+            while (
+                end < len(unique_memories)
+                and unique_memories[end].importance == importance
+            ):
+                end += 1
+
+            diverse: list[MemoryRecord] = []
+            remaining: list[MemoryRecord] = []
+            group_categories = set(represented_categories)
+            for memory in unique_memories[start:end]:
+                category = memory.category.value
+                if category not in group_categories:
+                    diverse.append(memory)
+                    group_categories.add(category)
+                else:
+                    remaining.append(memory)
+
+            for memory in diverse + remaining:
+                selected.append(memory)
+                represented_categories.add(memory.category.value)
+                if len(selected) == request.limit:
+                    break
+            start = end
+
+        return ProjectContextResponse(
+            project=project,
+            total_memories=total_memories,
+            memories=selected,
+        )
 
     @staticmethod
     def _fts_phrase(term: str) -> str:

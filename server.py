@@ -2,6 +2,7 @@ from mcp.server import MCPServer
 
 from project_memory.tools import (
     forget_memory as forget_memory_tool,
+    get_project_context as get_project_context_tool,
     list_memories as list_memories_tool,
     recall_memories,
     remember_memory,
@@ -181,6 +182,13 @@ def list_memories(
         category=category,
         limit=limit,
     )
+
+
+@mcp.tool()
+def get_project_context(limit: int = 10) -> dict[str, object]:
+    """Aktif projenin en önemli hafızalarından context üretir."""
+
+    return get_project_context_tool(limit=limit)
 
 
 if __name__ == "__main__":
